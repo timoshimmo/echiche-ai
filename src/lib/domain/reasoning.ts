@@ -1,19 +1,31 @@
-export type ReasoningStage = {
-  stage: "frame" | "challenge" | "synthesize";
-  title: string;
-  content: string;
-};
+import { z } from "zod";
 
-export type ReasoningResult = {
-  summary: string;
-  stages: ReasoningStage[];
-  caveat: string;
-};
+/**
+ * Stored-result contract for the deterministic scaffold.
+ * Persisted as JSONB with result_schema_version = REASONING_RESULT_SCHEMA_VERSION.
+ * Per ADR-001 this TypeScript scaffold is replaced by the Python worker in M3,
+ * after which worker-owned payloads are defined in Pydantic (contracts/).
+ */
+export const REASONING_RESULT_SCHEMA_VERSION = "reasoning-scaffold.v1";
+
+export const reasoningStageSchema = z.object({
+  stage: z.enum(["frame", "challenge", "synthesize"]),
+  title: z.string().min(1),
+  content: z.string().min(1)
+});
+
+export const reasoningResultSchema = z.object({
+  summary: z.string().min(1),
+  stages: z.array(reasoningStageSchema).min(1),
+  caveat: z.string().min(1)
+});
+
+export type ReasoningStage = z.infer<typeof reasoningStageSchema>;
+export type ReasoningResult = z.infer<typeof reasoningResultSchema>;
 
 /**
  * Deterministic placeholder for the first vertical slice.
  * This is NOT an LLM and must not be presented as production-grade reasoning.
- * Replace behind the ReasoningProvider interface once evaluations and budgets exist.
  */
 export function runDeterministicThought(prompt: string): ReasoningResult {
   const cleaned = prompt.trim().replace(/\s+/g, " ");

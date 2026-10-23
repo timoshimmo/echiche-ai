@@ -8,3 +8,6 @@ export const createProjectSchema = z.object({
 export const startRunSchema = z.object({
   prompt: z.string().trim().min(10).max(8000)
 });
+
+/** Route IDs are UUIDs. Anything else is treated as "not found" without touching storage. */
+export const resourceIdSchema = z.uuid();

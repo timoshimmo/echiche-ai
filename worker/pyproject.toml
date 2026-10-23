@@ -1,0 +1,45 @@
+[project]
+name = "echiche-worker"
+version = "0.1.0"
+description = "Echiche AI orchestration worker (ADR-001). M1 skeleton: configuration and logging only; no job loop yet."
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+# Runtime dependencies arrive with M3 (pydantic, psycopg[binary]) per ADR-001 D3.
+dependencies = []
+
+[project.scripts]
+echiche-worker = "echiche_worker.__main__:main"
+
+[dependency-groups]
+dev = [
+  "pyright==1.1.407",
+  "pytest==8.4.2",
+  "ruff==0.14.1",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/echiche_worker"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S", "BLE", "RUF", "ANN"]
+ignore = []
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "ANN"]
+
+[tool.pyright]
+include = ["src", "tests"]
+pythonVersion = "3.12"
+typeCheckingMode = "strict"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"

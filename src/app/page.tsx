@@ -1,10 +1,13 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
+import type { Project, ThoughtRunWithEvents } from "@/lib/domain/types";
 
-type Project = { id: string; title: string; problemStatement: string; createdAt: string };
-type Run = { id: string; prompt: string; status: string; result: string | null; createdAt: string; completedAt: string | null; events?: { id: string; stage: string; message: string; type: string }[] };
-type ReasoningResult = { summary: string; stages: { stage: string; title: string; content: string }[]; caveat: string };
+type Readiness = "checking" | "postgres" | "in-memory-demo" | "unavailable";
+
+const STATUS_LABEL: Record<ThoughtRunWithEvents["status"], string> = {
+  queued: "Queued", running: "Running", succeeded: "✓ Succeeded", failed: "✕ Failed"
+};
 
 export default function HomePage() {
   const [projects, setProjects] = useState<Project[]>([]);
@@ -12,20 +15,32 @@ export default function HomePage() {
   const [title, setTitle] = useState("");
   const [problemStatement, setProblemStatement] = useState("");
   const [prompt, setPrompt] = useState("");
-  const [run, setRun] = useState<Run | null>(null);
+  const [run, setRun] = useState<ThoughtRunWithEvents | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
-  const [persistence, setPersistence] = useState("loading");
+  const [readiness, setReadiness] = useState<Readiness>("checking");
+
+  async function checkReadiness() {
+    try {
+      const response = await fetch("/api/ready", { cache: "no-store" });
+      const body = await response.json();
+      setReadiness(response.ok && (body.persistence === "postgres" || body.persistence === "in-memory-demo") ? body.persistence : "unavailable");
+    } catch {
+      setReadiness("unavailable");
+    }
+  }
 
   async function loadProjects() {
     const response = await fetch("/api/projects");
     const body = await response.json();
     if (!response.ok) throw new Error(body.error?.message ?? "Could not load projects");
     setProjects(body.data);
-    setPersistence(body.meta?.persistence ?? "unknown");
     if (!selectedId && body.data[0]) setSelectedId(body.data[0].id);
   }
-  useEffect(() => { loadProjects().catch(e => setMessage(e.message)); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    checkReadiness();
+    loadProjects().catch(e => setMessage(e.message));
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function createProject(event: FormEvent) {
     event.preventDefault(); setBusy(true); setMessage(""); setRun(null);
@@ -47,20 +62,25 @@ export default function HomePage() {
       const response = await fetch(`/api/projects/${selectedId}/runs`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ prompt }) });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error?.message ?? "Could not run");
-      setRun(body.data); setMessage("Thought run completed.");
+      setRun(body.data); setMessage(body.data.status === "succeeded" ? "Thought run completed." : `Thought run ended with status: ${body.data.status}.`);
     } catch (e) { setMessage(e instanceof Error ? e.message : "Something went wrong"); }
     finally { setBusy(false); }
   }
 
-  let result: ReasoningResult | null = null;
-  if (run?.result) { try { result = JSON.parse(run.result) as ReasoningResult; } catch { result = null; } }
+  const result = run?.result ?? null;
+  const modeLabel: Record<Readiness, string> = {
+    checking: "Checking storage…",
+    postgres: "PostgreSQL ready",
+    "in-memory-demo": "Demo storage · resets on restart",
+    unavailable: "Storage unavailable"
+  };
 
   return (
     <main className="shell">
       <header className="topbar">
         <div className="brand-mark">E</div>
         <div><div className="brand">echiche</div><div className="tagline">Deep thought, with continuity.</div></div>
-        <div className="mode"><span className="dot" />{persistence === "postgres" ? "PostgreSQL connected" : "Demo storage · resets on restart"}</div>
+        <div className="mode"><span className="dot" style={readiness === "unavailable" ? { background: "#c0563f" } : undefined} />{modeLabel[readiness]}</div>
       </header>
       <section className="hero">
         <p className="eyebrow">FOUNDING BUILD · 0.1.0</p>
@@ -90,7 +110,7 @@ export default function HomePage() {
         </section>
       </div>
       {run && result && <section className="results">
-        <div className="result-head"><div><p className="eyebrow">THOUGHT RUN COMPLETE</p><h2>{result.summary}</h2></div><span className="status-pill">✓ Succeeded</span></div>
+        <div className="result-head"><div><p className="eyebrow">THOUGHT RUN COMPLETE</p><h2>{result.summary}</h2></div><span className="status-pill">{STATUS_LABEL[run.status]}</span></div>
         <div className="stage-grid">{result.stages.map((stage, index) => <article className="stage-card" key={stage.stage}><span className="stage-number">0{index + 1}</span><h3>{stage.title}</h3><p>{stage.content}</p></article>)}</div>
         <div className="caveat"><strong>Important limitation</strong><p>{result.caveat}</p></div>
         {run.events?.length ? <details><summary>Run event log ({run.events.length})</summary><ul>{run.events.map(event => <li key={event.id}><b>{event.stage}</b> — {event.message}</li>)}</ul></details> : null}

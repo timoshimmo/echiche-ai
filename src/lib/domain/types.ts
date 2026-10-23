@@ -1,3 +1,8 @@
+// No runtime dependencies (only `import type`): safe to import from client components.
+import type { ReasoningResult } from "./reasoning";
+
+export type { ReasoningResult, ReasoningStage } from "./reasoning";
+
 export type Project = {
   id: string;
   title: string;
@@ -5,12 +10,17 @@ export type Project = {
   createdAt: string;
 };
 
-export type RunStatus = "queued" | "running" | "succeeded" | "failed";
-export type RunEventType = "status" | "stage" | "result" | "error";
+export const RUN_STATUSES = ["queued", "running", "succeeded", "failed"] as const;
+export type RunStatus = (typeof RUN_STATUSES)[number];
+
+export const RUN_EVENT_TYPES = ["status", "stage", "result", "error"] as const;
+export type RunEventType = (typeof RUN_EVENT_TYPES)[number];
 
 export type RunEvent = {
   id: string;
   runId: string;
+  /** 1-based, strictly increasing per run. The only reliable event order. */
+  sequence: number;
   type: RunEventType;
   stage: string;
   message: string;
@@ -22,10 +32,14 @@ export type ThoughtRun = {
   projectId: string;
   prompt: string;
   status: RunStatus;
-  result: string | null;
+  result: ReasoningResult | null;
+  /** Stable machine-readable reason when status === "failed". */
+  errorCode: string | null;
   createdAt: string;
   completedAt: string | null;
 };
+
+export type ThoughtRunWithEvents = ThoughtRun & { events: RunEvent[] };
 
 export type CreateProjectInput = {
   title: string;
@@ -35,3 +49,5 @@ export type CreateProjectInput = {
 export type StartRunInput = {
   prompt: string;
 };
+
+export type PersistenceMode = "postgres" | "in-memory-demo";

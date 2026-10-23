@@ -1,15 +1,22 @@
 import { NextResponse } from "next/server";
-import { getRepository } from "@/lib/server/container";
+import { resourceIdSchema } from "@/lib/domain/validation";
+import { getRepository, persistenceMode } from "@/lib/server/container";
+import { handleUnexpected, notFound } from "@/lib/server/http";
+
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+const ROUTE = "GET /api/runs/:runId";
 
 export async function GET(_request: Request, context: { params: Promise<{ runId: string }> }) {
-  const { runId } = await context.params;
+  const id = resourceIdSchema.safeParse((await context.params).runId);
+  if (!id.success) return notFound("Run");
   try {
     const repo = getRepository();
-    const run = await repo.getRun(runId);
-    if (!run) return NextResponse.json({ error: { code: "NOT_FOUND", message: "Run not found." } }, { status: 404 });
-    return NextResponse.json({ data: { ...run, events: await repo.listEvents(runId) } });
+    const run = await repo.getRun(id.data);
+    if (!run) return notFound("Run");
+    return NextResponse.json({ data: { ...run, events: await repo.listEvents(id.data) }, meta: { persistence: persistenceMode() } });
   } catch (error) {
-    return NextResponse.json({ error: { code: "STORAGE_UNAVAILABLE", message: error instanceof Error ? error.message : "Storage unavailable" } }, { status: 503 });
+    return handleUnexpected(error, ROUTE);
   }
 }

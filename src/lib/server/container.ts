@@ -1,14 +1,25 @@
-import type { EchicheRepository } from "./repository";
+import type { PersistenceMode } from "@/lib/domain/types";
+import { getServerConfig } from "./config";
 import { MemoryRepository } from "./memory-repository";
 import { PostgresRepository } from "./postgres-repository";
+import type { EchicheRepository } from "./repository";
 
 let memoryRepository: MemoryRepository | undefined;
+
+/** Returns the configured repository. Throws ConfigError if configuration is invalid; never falls back silently. */
 export function getRepository(): EchicheRepository {
-  if (process.env.DATABASE_URL) return new PostgresRepository();
-  if (process.env.ALLOW_IN_MEMORY_DEMO === "false") {
-    throw new Error("DATABASE_URL is required when ALLOW_IN_MEMORY_DEMO=false");
-  }
+  const config = getServerConfig();
+  if (config.persistence === "postgres" && config.databaseUrl) return new PostgresRepository(config.databaseUrl);
   memoryRepository ??= new MemoryRepository();
   return memoryRepository;
 }
-export const persistenceMode = () => process.env.DATABASE_URL ? "postgres" : "in-memory-demo";
+
+/** Reflects validated configuration. Use /api/ready to learn whether storage is actually reachable. */
+export function persistenceMode(): PersistenceMode {
+  return getServerConfig().persistence;
+}
+
+/** Test helper: drop the in-memory store. */
+export function resetRepositoryForTests(): void {
+  memoryRepository = undefined;
+}

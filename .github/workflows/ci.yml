@@ -4,17 +4,79 @@ on:
     branches: [main, master]
   pull_request:
     branches: [main, master]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  quality:
+  web:
+    name: Web (typecheck, lint, unit tests, build, audit)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-      - run: npm install
+      - run: npm ci
       - run: npm run typecheck
       - run: npm run lint
       - run: npm test
+      # Build deliberately runs without DATABASE_URL: configuration is validated at server start, not build.
       - run: npm run build
+      # Production dependencies must be free of high/critical advisories.
+      - run: npm audit --omit=dev --audit-level=high
+
+  integration:
+    name: Integration (real Postgres 16)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: echiche
+          POSTGRES_PASSWORD: ci-only-placeholder
+          POSTGRES_DB: echiche_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U echiche -d echiche_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://echiche:ci-only-placeholder@localhost:5432/echiche_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run db:migrate
+      # Re-running must be a no-op.
+      - run: npm run db:migrate
+      - run: npm run test:integration
+
+  worker:
+    name: Worker (ruff, pyright, pytest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: worker
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: worker/uv.lock
+      - run: uv python install
+      - run: uv sync --locked
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run pyright
+      - run: uv run pytest

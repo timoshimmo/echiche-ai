@@ -1,160 +1,171 @@
-# Echiche Production Starter Repository
+# Echiche (starter, milestone M1)
 
-**Version:** 0.1.0  
-**Purpose:** Build the first testable slice of Echiche: create a project, start a bounded thought run, capture stages as events, and render the result.
+**Version:** 0.1.0 · **Stage:** M1 "Stabilize the foundation" done; next is M2 (auth and tenancy).
 
-> **Important:** This is a development starter, not production-ready multi-user software. It has no authentication or tenant isolation yet. Do not expose it publicly with real user data until the security gates in this README are completed.
+> **Not production-ready.** There is no authentication or tenant isolation: anyone who can reach the server can read and write every project. Treat it as a single-user local prototype until the gates under [Security gates](#security-and-reliability-gates-before-real-users) are closed. See [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md) for what is verified.
 
-## What works in this slice
+## Architecture (ADR-001)
 
-1. Create a project with a title and problem statement.
-2. Start a thought run attached to a project.
-3. Record the `frame → challenge → synthesize` stages as run events.
-4. Return a structured result and display it in the UI.
-5. Store data in PostgreSQL when `DATABASE_URL` is set; otherwise use in-memory demo storage.
-6. Validate API inputs and run unit tests in CI.
+- **`/` (Next.js 15, TypeScript):** UI, API routes, and, from M2, auth, authorization and all user-facing CRUD.
+- **`worker/` (Python 3.12):** owns run execution from M3 (state machine, budgets, model/research adapters). Today it is a skeleton.
+- **`supabase/migrations/`:** plain SQL, the single source of schema truth, applied by `npm run db:migrate`.
+- **`contracts/`:** versioned JSON Schemas shared by both sides (from M3).
 
-The current reasoning engine is deliberately deterministic. It is a scaffold for the end-to-end workflow, **not an LLM**, and it does not perform web research, verify facts, or maintain long-term memory. That boundary is explicit in the UI.
+The two services communicate **only through PostgreSQL rows and versioned contracts**. See [ADR-001](docs/decisions/001-language-and-service-boundary.md).
+
+In M1, thought runs still execute **synchronously inside the API request** using a deterministic scaffold. **It is not an LLM**: no research, no verification, no memory. The UI says so.
 
 ## Requirements
 
-- Node.js 22+
-- npm 10+
-- Optional: PostgreSQL 15+ / Supabase Postgres
+- Node.js 22.x and npm 10+ (`engines` in `package.json`)
+- For persistent storage and integration tests: PostgreSQL 15+ (16 is what CI uses)
+- For the worker: [uv](https://docs.astral.sh/uv/) (it installs Python 3.12 if needed)
 
-## Run locally
+## Local development
+
+### Quick start (in-memory demo storage)
 
 ```bash
-cp .env.example .env.local
-npm install
-npm run dev
+npm ci
+cp .env.example .env.local      # sets ALLOW_IN_MEMORY_DEMO=true, DATABASE_URL empty
+npm run dev                     # http://localhost:3000
 ```
 
-Open `http://localhost:3000`.
+Data lives in the dev server's memory and disappears on restart. In-memory mode is **refused when `NODE_ENV=production`**.
 
-Without `DATABASE_URL`, the app uses in-memory demo storage. Data disappears when the Node process restarts and may not be shared across multiple workers.
+### With PostgreSQL
 
-## Persistent PostgreSQL setup
+```bash
+# 1. A disposable local database (Docker shown; any Postgres 15+ works)
+docker run -d --name echiche-pg -e POSTGRES_USER=echiche -e POSTGRES_PASSWORD=change-me \
+  -e POSTGRES_DB=echiche_dev -p 5432:5432 postgres:16
 
-1. Create a managed PostgreSQL database (Supabase Postgres is one option).
-2. Apply `supabase/migrations/0001_initial_schema.sql` using your database migration workflow or SQL editor.
-3. Set `DATABASE_URL` in `.env.local` to a server-side connection string. Prefer a pooled connection string in serverless environments.
-4. Restart the dev server and confirm the header says `PostgreSQL connected`.
+# 2. Point the app at it: in .env.local set
+#    DATABASE_URL=postgresql://echiche:change-me@localhost:5432/echiche_dev
+#    ALLOW_IN_MEMORY_DEMO=false
 
-Never prefix `DATABASE_URL` with `NEXT_PUBLIC_`. Do not commit `.env.local`.
+# 3. Apply migrations (idempotent; safe to re-run)
+DATABASE_URL=postgresql://echiche:change-me@localhost:5432/echiche_dev npm run db:migrate
+
+# 4. Run and check readiness
+npm run dev
+curl localhost:3000/api/ready   # {"status":"ready","persistence":"postgres"}
+```
+
+**Upgrading a 0.1.0 database** where `0001_initial_schema.sql` was applied by hand: record it as applied once, then migrate normally:
+
+```bash
+DATABASE_URL=... npm run db:migrate -- --baseline=0001_initial_schema.sql
+```
+
+Migration 0002 also repairs results that 0.1.0 stored as double-encoded JSON strings.
+
+Use `npm run db:migrate` **or** the Supabase CLI for a given database, not both. They keep separate history tables.
+
+### Worker (Python)
+
+```bash
+cd worker && uv sync --locked && uv run pytest
+```
+
+See [`worker/README.md`](worker/README.md).
+
+## Environment variables
+
+| Variable | Where | Required | Behaviour |
+|---|---|---|---|
+| `DATABASE_URL` | web, worker | Web: in production. Worker: always. | Must be `postgres://` or `postgresql://`. Server-side only; never use a `NEXT_PUBLIC_` prefix. |
+| `ALLOW_IN_MEMORY_DEMO` | web | no | `"true"`/`"false"`, default `false`. Only honoured outside production. |
+| `WORKER_POLL_INTERVAL_SECONDS`, `WORKER_ID` | worker | no | See `worker/README.md`. |
+
+Configuration is validated when the server starts (`src/instrumentation.ts`):
+- **In production,** invalid or missing configuration logs `config_invalid`, naming the variables but not their values, and **the process exits with code 1**.
+- **In development,** the server keeps running and API calls return `503 CONFIG_INVALID`.
 
 ## Commands
 
-```bash
-npm run dev       # local development
-npm run typecheck # TypeScript checks
-npm run lint      # ESLint
-npm test          # unit tests
-npm run build     # production build
-npm start         # serve production build
-```
+| Command | What it does |
+|---|---|
+| `npm run dev` | Development server |
+| `npm run typecheck` | `tsc --noEmit` |
+| `npm run lint` | ESLint (Next core-web-vitals + TypeScript rules) |
+| `npm test` | Unit tests (no database, no network) |
+| `npm run test:integration` | Integration tests against **a disposable, migrated** Postgres. They TRUNCATE tables, so never run them against shared data. They fail if `DATABASE_URL` is missing. |
+| `npm run db:migrate [-- --status \| --baseline=FILE]` | Apply or inspect SQL migrations |
+| `npm run build` / `npm start` | Production build / serve (`start` needs a valid `DATABASE_URL`) |
+
+CI (`.github/workflows/ci.yml`) runs three jobs: **web** (typecheck, lint, unit, build, `npm audit --omit=dev --audit-level=high`), **integration** (Postgres 16 service, migrate twice, integration tests) and **worker** (ruff, ruff format check, pyright strict, pytest).
+
+## Health and readiness
+
+| Endpoint | Meaning | Use for |
+|---|---|---|
+| `GET /api/health` | 200 `{"status":"ok"}` whenever the process serves requests. Touches nothing else. | Liveness probe (restart if failing) |
+| `GET /api/ready` | 200 `{"status":"ready","persistence":"postgres"\|"in-memory-demo"}` when config is valid **and** storage answers `select 1` within 3 s. Otherwise 503 with `CONFIG_INVALID` or `STORAGE_UNAVAILABLE`. | Readiness probe / load-balancer check; the UI's storage indicator |
+
+Neither endpoint exposes hostnames, versions or secrets.
 
 ## API contracts
 
-### `POST /api/projects`
+All private-data endpoints are **unauthenticated until M2**. Responses are `{ "data": ..., "meta": { "persistence": ... } }` on success and `{ "error": { "code", "message" } }` on failure. Messages are fixed strings and never contain exception or driver text.
 
-Request:
+| Code | HTTP | When |
+|---|---|---|
+| `VALIDATION_ERROR` | 400 | Body missing, malformed JSON, or fails the schema |
+| `NOT_FOUND` | 404 | Unknown **or malformed** project/run ID (malformed IDs never reach storage) |
+| `RUN_FAILED` | 500 | The run could not complete; it is persisted as `status: "failed"` with `errorCode` |
+| `CONFIG_INVALID` | 503 | Server configuration is invalid |
+| `STORAGE_UNAVAILABLE` | 503 | Database unreachable |
+| `INTERNAL_ERROR` | 500 | Anything else (logged with error name/code only) |
 
-```json
-{
-  "title": "Launch strategy",
-  "problemStatement": "Decide how to validate the first customer segment."
-}
-```
+- `POST /api/projects`: `{ "title": "2–120 chars", "problemStatement": "10–5000 chars" }` → `201` project
+- `GET /api/projects`: up to 100 most recent projects
+- `POST /api/projects/:projectId/runs`: `{ "prompt": "10–8000 chars" }` → `201` run with `events`. *Synchronous in M1. From M3 it returns `202` and the worker executes the run.*
+- `GET /api/projects/:projectId/runs`: up to 50 most recent runs
+- `GET /api/runs/:runId`: one run plus its events
 
-Returns `201` with `{ "data": { ...project }, "meta": { "persistence": "postgres" } }`.
-
-### `GET /api/projects`
-
-Returns the most recent projects.
-
-### `POST /api/projects/:projectId/runs`
-
-Request:
-
-```json
-{ "prompt": "What evidence should we gather before choosing our first customer segment?" }
-```
-
-Returns `201` with a run, structured result, and event log.
-
-### `GET /api/projects/:projectId/runs`
-
-Lists a project's runs.
-
-### `GET /api/runs/:runId`
-
-Returns one run and its events.
+Run shape: `{ id, projectId, prompt, status: "queued"|"running"|"succeeded"|"failed", result: object|null, errorCode, createdAt, completedAt }`. `result` is a typed object (`reasoning-scaffold.v1`), stored as JSONB. Events carry a per-run `sequence` (1, 2, 3, …), which is the only reliable order.
 
 ## Repository layout
 
 ```text
-src/
-  app/
-    api/projects/                 # project endpoints
-    api/projects/[projectId]/runs # run creation/listing
-    api/runs/[runId]               # run retrieval
-    page.tsx                       # first-slice UI
-  lib/domain/                      # types, validation, deterministic workflow, tests
-  lib/server/                      # repository interface and storage adapters
-supabase/migrations/               # PostgreSQL schema
-.github/workflows/ci.yml           # typecheck, lint, tests, build
+src/app/api/            route handlers: health, ready, projects, runs
+src/app/page.tsx        first-slice UI
+src/instrumentation.ts  boot-time configuration check
+src/lib/domain/         types, Zod schemas, deterministic scaffold (pure; no I/O)
+src/lib/server/         config, error contract, logging, repositories, run service
+src/test/               integration-test setup
+scripts/migrate.mjs     SQL migration runner
+supabase/migrations/    schema (plain SQL)
+worker/                 Python worker (skeleton)
+contracts/              cross-service JSON Schemas (from M3)
+docs/decisions/         ADRs
+docs/product/           founding blueprint / PRD
+docs/claude-prompts/    staged engineering prompts
+prompts/runtime/        draft product prompts (unused until M4)
 ```
 
-## Architecture decisions in this starter
+## Security and reliability gates before real users
 
-- **Repository interface:** API and workflow code depend on `EchicheRepository`, not directly on a storage engine.
-- **Deterministic run orchestration:** the first slice makes state transitions visible and testable before a model provider is introduced.
-- **Provider-neutral next step:** add a `ReasoningProvider` interface, implement one provider adapter server-side, then run it against a fixed evaluation set before enabling it by default.
-- **Postgres JSONB result:** stores the structured output; event records provide an append-only execution trace.
-- **No graph database yet:** project/run/event relationships are relational and sufficient for this stage.
+Still open (milestone in brackets):
 
-## Security and reliability gates before public launch
+1. Authentication; `owner_user_id` on every private row, set from the session [M2]
+2. Server-side authorization on every handler, Postgres RLS, and denied cross-user tests [M2]
+3. Least-privilege DB roles for web and worker (ADR-001 D5); no superuser or service role in the app [M2]
+4. Rate limits and request-size limits on POST endpoints [M2]
+5. Durable runs in the worker: 202 + queue, checkpoints, cancellation, idempotency, budgets [M3]
+6. Provider adapter with token/time/search/spend caps [M4]
+7. Claim/source provenance before any web research [M5]
+8. Export/delete, retention policy, backup/restore test, privacy copy [M6–M8]
+9. Security test suite, Playwright E2E, deployment smoke test, error monitoring [M8]
 
-This starter deliberately does **not** implement authentication, per-user project ownership, row-level security, rate limiting, CSRF/origin policy, background job durability, or external model calls. It must be treated as a single-user local prototype until these are added.
+## Known limitations (M1)
 
-Before deploying for real users:
+- No auth (see above). Single-user only.
+- Runs execute synchronously in the request; the TypeScript `run-service.ts` is removed when the Python worker takes over (M3).
+- The scaffold does not use the project's problem statement unless it is copied into the prompt.
+- Dev-only advisories remain in `eslint-config-next@15`'s glob dependencies. They clear when moving to Next 16 (`npm audit` without `--omit=dev` shows them).
 
-1. Add authentication and `user_id` ownership to projects and all dependent rows.
-2. Enforce authorization in every API handler and add Postgres Row Level Security policies; test cross-user access attempts.
-3. Use a restricted database role, not a superuser/service role exposed to the browser. Keep all database credentials server-only.
-4. Add request rate limits, request IDs, structured redacted logs, and explicit payload/output limits.
-5. Move long-running runs to a durable queue/worker; make run creation idempotent and add cancellation/timeouts.
-6. Add model provider adapter with per-run token, time, search, and spend caps; handle provider errors and retries.
-7. Add a claim/source schema and provenance before introducing web research.
-8. Add export/delete workflows, retention policy, backup/restore test, and privacy copy.
-9. Add integration tests against a disposable Postgres database and a security test suite.
-10. Run a production deployment smoke test and verify error monitoring.
+## Claude engineering prompt kit
 
-## Known first-slice limitations
-
-- In-memory mode is ephemeral and only suitable for local demonstration.
-- The run executes synchronously in the API request; it is not suitable for long model calls.
-- The reasoning scaffold does not use the project's problem statement as memory unless the user copies it into the prompt.
-- The initial migration is not RLS-protected because there is no auth layer. Do not deploy it as a multi-user application.
-- The result is stored as JSONB in PostgreSQL. The repository maps it to a string for a shared interface; Postgres drivers may return JSONB as an object. See the first database integration test milestone before relying on result parsing in the UI.
-
-## Recommended next build increment
-
-1. Auth + tenant ownership + RLS.
-2. A persistent run state machine and durable worker.
-3. `ReasoningProvider` interface and first model adapter.
-4. Fixed evaluation benchmark and cost guardrails.
-5. Decision/memory records with user approval and provenance.
-
-## Claude Engineering Prompt Kit
-
-This repository now includes a staged prompt system for building Echiche alongside Claude. Start with:
-
-1. `CLAUDE.md` — persistent product, architecture, security and engineering instructions.
-2. `docs/product/Founding_Blueprint_PRD_Engineering_Handoff.md` — searchable founding specification; the Word source is alongside it.
-3. `docs/claude-prompts/00-repository-audit-and-architecture.md` — first task, plan-only. Do not skip the architecture decision, especially the TypeScript/Python boundary.
-4. Follow the prompts in `docs/claude-prompts/` one stage at a time.
-5. Treat `prompts/runtime/` as draft, versioned application prompt assets; schema validation and evaluations are required before production use.
-
-The repository remains a starter scaffold. The presence of a prompt pack, tests, or code files does not mean authentication, tenant isolation, durable orchestration, live AI providers, research verification, memory controls or release gates have already been completed. Consult `IMPLEMENTATION_STATUS.md` and rerun checks before relying on any behavior.
+Start with [`CLAUDE.md`](CLAUDE.md), then follow [`docs/claude-prompts/`](docs/claude-prompts/README.md) one stage at a time. The founding spec is [`docs/product/Founding_Blueprint_PRD_Engineering_Handoff.md`](docs/product/Founding_Blueprint_PRD_Engineering_Handoff.md).
