@@ -1,6 +1,6 @@
 # ADR-003: Run result storage
 
-- Status: **Proposed**. Implemented in M1 as the recommended default; awaiting decision-owner approval.
+- Status: **Accepted** (2026-10-25). Implemented in M1.
 - Date: 2026-10-23
 - Decision owner: Tokmang
 - Related: ADR-001 D1 (contracts), blueprint §6.3 (validated structured outputs)
@@ -8,7 +8,7 @@
 ## Context
 0.1.0 typed `result` as a `string` everywhere and bound `JSON.stringify(result)` into a `jsonb` column. Testing against Postgres 16 showed this stored a JSONB string scalar (`jsonb_typeof = 'string'`), so `result->>'summary'` returned null and the database could not query the result. The UI re-declared its own result type and called `JSON.parse`.
 
-## Decision (proposed)
+## Decision
 - Store results as a **JSONB object** with a `result_schema_version` column (`reasoning-scaffold.v1` today).
 - Validate on **write and read** against the versioned schema. A stored value that fails validation raises `DataIntegrityError` and is never passed to clients as if valid.
 - The domain type is the structured object (`ReasoningResult`), never a string. The UI imports the shared type.
