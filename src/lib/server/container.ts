@@ -1,25 +1,19 @@
-import type { PersistenceMode } from "@/lib/domain/types";
 import { getServerConfig } from "./config";
-import { MemoryRepository } from "./memory-repository";
-import { PostgresRepository } from "./postgres-repository";
-import type { EchicheRepository } from "./repository";
+import { PostgresStore } from "./postgres-repository";
+import type { Store } from "./repository";
 
-let memoryRepository: MemoryRepository | undefined;
+let override: Store | undefined;
 
-/** Returns the configured repository. Throws ConfigError if configuration is invalid; never falls back silently. */
-export function getRepository(): EchicheRepository {
-  const config = getServerConfig();
-  if (config.persistence === "postgres" && config.databaseUrl) return new PostgresRepository(config.databaseUrl);
-  memoryRepository ??= new MemoryRepository();
-  return memoryRepository;
+/**
+ * The configured Store. There is no in-memory runtime mode (removed in M2: it would
+ * require an auth bypass). Throws ConfigError if configuration is invalid.
+ * Routes call getStore().forOwner(user.id) with the ID from requireUser().
+ */
+export function getStore(): Store {
+  return override ?? new PostgresStore(getServerConfig().databaseUrl);
 }
 
-/** Reflects validated configuration. Use /api/ready to learn whether storage is actually reachable. */
-export function persistenceMode(): PersistenceMode {
-  return getServerConfig().persistence;
-}
-
-/** Test helper: drop the in-memory store. */
-export function resetRepositoryForTests(): void {
-  memoryRepository = undefined;
+/** Test helper: route tests inject a MemoryStore. Pass undefined to clear. */
+export function setStoreForTests(store: Store | undefined): void {
+  override = store;
 }

@@ -1,21 +1,28 @@
 import postgres from "postgres";
 
-/** Fails fast with a clear message instead of letting every test time out. */
+/**
+ * Integration tests need two connections to a DISPOSABLE database prepared with
+ * `npm run test:db:prepare`:
+ *   DATABASE_URL             - the app's runtime role (echiche_web), as in production
+ *   TEST_ADMIN_DATABASE_URL  - a superuser, used only to create test users and clean up
+ * Fails fast (never skips) when either is missing or the schema is not migrated.
+ */
 export default async function setup() {
-  const url = process.env.DATABASE_URL?.trim();
-  if (!url) {
-    throw new Error("Integration tests require DATABASE_URL pointing at a disposable, migrated Postgres database (see README).");
+  const appUrl = process.env.DATABASE_URL?.trim();
+  const adminUrl = process.env.TEST_ADMIN_DATABASE_URL?.trim();
+  if (!appUrl || !adminUrl) {
+    throw new Error("Integration tests require DATABASE_URL (echiche_web) and TEST_ADMIN_DATABASE_URL (superuser) for a disposable database. Run `npm run test:db:prepare` (see README).");
   }
-  const sql = postgres(url, { max: 1, prepare: false, connect_timeout: 5, onnotice: () => {} });
+  if (new URL(appUrl).username !== "echiche_web") {
+    throw new Error("DATABASE_URL must connect as echiche_web so tests exercise the production connection context.");
+  }
+  const sql = postgres(adminUrl, { max: 1, prepare: false, connect_timeout: 5, onnotice: () => {} });
   try {
     const [row] = await sql<{ n: number }[]>`
-      select count(*)::int as n from echiche_schema_migrations where filename = '0002_run_failure_and_event_sequence.sql'`;
-    if (!row || row.n !== 1) throw new Error("Database is not migrated. Run `npm run db:migrate` first.");
-  } catch (error) {
-    if (error instanceof Error && /echiche_schema_migrations/.test(error.message)) {
-      throw new Error("Database is not migrated. Run `npm run db:migrate` first.");
-    }
-    throw error;
+      select count(*)::int as n from supabase_migrations.schema_migrations where version = '0003'`;
+    if (!row || row.n !== 1) throw new Error("not migrated");
+  } catch {
+    throw new Error("Database is not migrated through 0003. Run `npm run test:db:prepare` first.");
   } finally {
     await sql.end({ timeout: 5 });
   }

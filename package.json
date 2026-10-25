@@ -12,14 +12,20 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:integration": "vitest run --config vitest.integration.config.ts",
-    "db:migrate": "node scripts/migrate.mjs"
+    "test:db:prepare": "node scripts/prepare-test-db.mjs",
+    "db:start": "supabase start",
+    "db:stop": "supabase stop",
+    "db:reset": "supabase db reset",
+    "db:new-migration": "supabase migration new"
   },
   "dependencies": {
+    "@supabase/ssr": "0.12.7",
+    "@supabase/supabase-js": "2.117.3",
     "next": "15.5.28",
     "postgres": "3.4.7",
     "react": "19.1.10",
     "react-dom": "19.1.10",
-    "zod": "4.1.11"
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@eslint/eslintrc": "3.3.7",
@@ -28,6 +34,7 @@
     "@types/react-dom": "19.1.11",
     "eslint": "9.39.5",
     "eslint-config-next": "15.5.28",
+    "supabase": "2.120.0",
     "typescript": "5.9.2",
     "vitest": "3.2.7"
   },

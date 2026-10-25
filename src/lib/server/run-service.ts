@@ -1,5 +1,5 @@
 import { runDeterministicThought } from "@/lib/domain/reasoning";
-import type { EchicheRepository } from "./repository";
+import type { OwnerScopedRepository } from "./repository";
 
 export const RUN_FAILED = "RUN_FAILED";
 
@@ -7,8 +7,9 @@ export const RUN_FAILED = "RUN_FAILED";
  * Synchronous scaffold execution. Replaced by the Python worker in M3 (ADR-001).
  * Guarantees: a run never stays "running" after this function settles, and
  * "succeeded" is only written after every stage event has been persisted.
+ * The repository is owner-scoped, so a run belonging to anyone else is "not found".
  */
-export async function executeThoughtRun(repo: EchicheRepository, runId: string): Promise<void> {
+export async function executeThoughtRun(repo: OwnerScopedRepository, runId: string): Promise<void> {
   const run = await repo.getRun(runId);
   if (!run) throw new Error("RUN_NOT_FOUND");
   try {

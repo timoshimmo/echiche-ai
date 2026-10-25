@@ -1,171 +1,146 @@
-# Echiche (starter, milestone M1)
+# Echiche (starter, milestone M2)
 
-**Version:** 0.1.0 · **Stage:** M1 "Stabilize the foundation" done; next is M2 (auth and tenancy).
+**Version:** 0.1.0 · **Stage:** M2 "Auth, tenancy and data security" done; next is M3 (durable runs in the Python worker).
 
-> **Not production-ready.** There is no authentication or tenant isolation: anyone who can reach the server can read and write every project. Treat it as a single-user local prototype until the gates under [Security gates](#security-and-reliability-gates-before-real-users) are closed. See [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md) for what is verified.
+> **Not production-ready, but no longer single-user.** Sign-in (Supabase Auth magic links), per-user ownership, row-level security and CSRF/size/rate limits are in place and tested. Still missing before real users: durable background runs (M3), an evaluated AI provider (M4+), export/delete in the app (M6), and the release gates in [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md).
 
-## Architecture (ADR-001)
+## Architecture
 
-- **`/` (Next.js 15, TypeScript):** UI, API routes, and, from M2, auth, authorization and all user-facing CRUD.
-- **`worker/` (Python 3.12):** owns run execution from M3 (state machine, budgets, model/research adapters). Today it is a skeleton.
-- **`supabase/migrations/`:** plain SQL, the single source of schema truth, applied by `npm run db:migrate`.
-- **`contracts/`:** versioned JSON Schemas shared by both sides (from M3).
+- **`/` (Next.js 15, TypeScript):** UI, API, authentication and authorization ([ADR-004](docs/decisions/004-auth-and-tenancy.md)).
+- **`worker/` (Python 3.12):** owns run execution from M3 ([ADR-001](docs/decisions/001-language-and-service-boundary.md)). Skeleton today.
+- **`supabase/`:** Supabase CLI config and SQL migrations, the single source of schema truth ([ADR-002](docs/decisions/002-migration-tooling.md)).
+- **`contracts/`:** versioned JSON Schemas shared by both services (from M3).
 
-The two services communicate **only through PostgreSQL rows and versioned contracts**. See [ADR-001](docs/decisions/001-language-and-service-boundary.md).
+Data lives in a private Postgres schema `echiche`. It's reachable only through the app, which connects as `echiche_web` and runs each request as `echiche_end_user` with the caller's identity, so RLS enforces ownership in the database as well as in code. The Supabase publishable key cannot reach it.
 
-In M1, thought runs still execute **synchronously inside the API request** using a deterministic scaffold. **It is not an LLM**: no research, no verification, no memory. The UI says so.
+Runs still execute **synchronously in the API request** with a deterministic, non-LLM scaffold. The UI says so.
 
 ## Requirements
 
-- Node.js 22.x and npm 10+ (`engines` in `package.json`)
-- For persistent storage and integration tests: PostgreSQL 15+ (16 is what CI uses)
-- For the worker: [uv](https://docs.astral.sh/uv/) (it installs Python 3.12 if needed)
+- Node.js 22.x, npm 10+
+- **Docker** (for the local Supabase stack via the pinned Supabase CLI)
+- [uv](https://docs.astral.sh/uv/) for the Python worker
 
 ## Local development
 
-### Quick start (in-memory demo storage)
-
 ```bash
 npm ci
-cp .env.example .env.local      # sets ALLOW_IN_MEMORY_DEMO=true, DATABASE_URL empty
-npm run dev                     # http://localhost:3000
+npm run db:start                 # local Supabase (Postgres + Auth + mail catcher); applies migrations
+npx supabase status              # note API URL, publishable/anon key, Mailpit/Inbucket URL
+
+# One-time: give the app's DB role its local password
+TEST_ADMIN_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres npm run test:db:prepare
+
+cp .env.example .env.local       # then paste the publishable key into SUPABASE_PUBLISHABLE_KEY
+npm run dev                      # http://localhost:3000 → redirects to /login
 ```
 
-Data lives in the dev server's memory and disappears on restart. In-memory mode is **refused when `NODE_ENV=production`**.
+Sign in with any email address. The local stack doesn't send real email: open the mail-catcher URL from `supabase status` and click the link.
 
-### With PostgreSQL
+Useful commands: `npm run db:reset` (recreate and re-migrate), `npm run db:new-migration -- <name>`, `npm run db:stop`.
 
-```bash
-# 1. A disposable local database (Docker shown; any Postgres 15+ works)
-docker run -d --name echiche-pg -e POSTGRES_USER=echiche -e POSTGRES_PASSWORD=change-me \
-  -e POSTGRES_DB=echiche_dev -p 5432:5432 postgres:16
+**Coming from M1** (database migrated with the old runner): see "Upgrading a local database from M1" in [the runbook](docs/runbooks/supabase-setup.md).
 
-# 2. Point the app at it: in .env.local set
-#    DATABASE_URL=postgresql://echiche:change-me@localhost:5432/echiche_dev
-#    ALLOW_IN_MEMORY_DEMO=false
+## Environment variables (web)
 
-# 3. Apply migrations (idempotent; safe to re-run)
-DATABASE_URL=postgresql://echiche:change-me@localhost:5432/echiche_dev npm run db:migrate
+| Variable | Required | Notes |
+|---|---|---|
+| `DATABASE_URL` | always | Connect **as `echiche_web`**. Never `postgres`, never a service-role key. |
+| `SUPABASE_URL` | always | https (plain http only for a local stack in development) |
+| `SUPABASE_PUBLISHABLE_KEY` | always | Publishable/anon key. Secret or service-role keys are rejected. |
+| `APP_ORIGIN` | production | Exact https origin; used for CSRF checks and auth redirects |
+| `PROJECT_CREATE_LIMIT_PER_HOUR`, `RUN_CREATE_LIMIT_PER_HOUR` | no | Per-user caps, default 30 / 20 |
 
-# 4. Run and check readiness
-npm run dev
-curl localhost:3000/api/ready   # {"status":"ready","persistence":"postgres"}
-```
+The server validates configuration at start-up:
+- **Production:** it exits on any problem, including `SUPABASE_SERVICE_ROLE_KEY` being present at all.
+- **Development:** it keeps serving, and API calls return `503 CONFIG_INVALID`.
 
-**Upgrading a 0.1.0 database** where `0001_initial_schema.sql` was applied by hand: record it as applied once, then migrate normally:
-
-```bash
-DATABASE_URL=... npm run db:migrate -- --baseline=0001_initial_schema.sql
-```
-
-Migration 0002 also repairs results that 0.1.0 stored as double-encoded JSON strings.
-
-Use `npm run db:migrate` **or** the Supabase CLI for a given database, not both. They keep separate history tables.
-
-### Worker (Python)
-
-```bash
-cd worker && uv sync --locked && uv run pytest
-```
-
-See [`worker/README.md`](worker/README.md).
-
-## Environment variables
-
-| Variable | Where | Required | Behaviour |
-|---|---|---|---|
-| `DATABASE_URL` | web, worker | Web: in production. Worker: always. | Must be `postgres://` or `postgresql://`. Server-side only; never use a `NEXT_PUBLIC_` prefix. |
-| `ALLOW_IN_MEMORY_DEMO` | web | no | `"true"`/`"false"`, default `false`. Only honoured outside production. |
-| `WORKER_POLL_INTERVAL_SECONDS`, `WORKER_ID` | worker | no | See `worker/README.md`. |
-
-Configuration is validated when the server starts (`src/instrumentation.ts`):
-- **In production,** invalid or missing configuration logs `config_invalid`, naming the variables but not their values, and **the process exits with code 1**.
-- **In development,** the server keeps running and API calls return `503 CONFIG_INVALID`.
+Hosted setup (role passwords, Auth URLs, SMTP, Data API exposure) is a manual checklist: [`docs/runbooks/supabase-setup.md`](docs/runbooks/supabase-setup.md).
 
 ## Commands
 
 | Command | What it does |
 |---|---|
-| `npm run dev` | Development server |
-| `npm run typecheck` | `tsc --noEmit` |
-| `npm run lint` | ESLint (Next core-web-vitals + TypeScript rules) |
-| `npm test` | Unit tests (no database, no network) |
-| `npm run test:integration` | Integration tests against **a disposable, migrated** Postgres. They TRUNCATE tables, so never run them against shared data. They fail if `DATABASE_URL` is missing. |
-| `npm run db:migrate [-- --status \| --baseline=FILE]` | Apply or inspect SQL migrations |
-| `npm run build` / `npm start` | Production build / serve (`start` needs a valid `DATABASE_URL`) |
+| `npm run dev` / `npm run build` / `npm start` | Develop / build (needs no env) / serve (needs valid env) |
+| `npm run typecheck` · `npm run lint` · `npm test` | Static checks; unit tests (no database, no network) |
+| `npm run test:db:prepare` | Prepares a **disposable** database from `TEST_ADMIN_DATABASE_URL`: adds a test-only Supabase shim if needed, applies migrations via the Supabase CLI, sets test role passwords |
+| `npm run test:integration` | Repository and RLS tests as the real runtime role. Needs `DATABASE_URL` (echiche_web) and `TEST_ADMIN_DATABASE_URL`. Truncates data, so disposable databases only. |
 
-CI (`.github/workflows/ci.yml`) runs three jobs: **web** (typecheck, lint, unit, build, `npm audit --omit=dev --audit-level=high`), **integration** (Postgres 16 service, migrate twice, integration tests) and **worker** (ruff, ruff format check, pyright strict, pytest).
+CI (`.github/workflows/ci.yml`) has four jobs:
 
-## Health and readiness
+| Job | Runs |
+|---|---|
+| **web** | typecheck, lint, unit tests, build, client-bundle secret scan, production `npm audit` |
+| **integration** | plain Postgres 16 with the test shim |
+| **supabase-stack** | the real local Supabase stack: integration and RLS suites, plus a check that the Auth server rejects a token after logout |
+| **worker** | ruff, pyright strict, pytest |
 
-| Endpoint | Meaning | Use for |
-|---|---|---|
-| `GET /api/health` | 200 `{"status":"ok"}` whenever the process serves requests. Touches nothing else. | Liveness probe (restart if failing) |
-| `GET /api/ready` | 200 `{"status":"ready","persistence":"postgres"\|"in-memory-demo"}` when config is valid **and** storage answers `select 1` within 3 s. Otherwise 503 with `CONFIG_INVALID` or `STORAGE_UNAVAILABLE`. | Readiness probe / load-balancer check; the UI's storage indicator |
+## API
 
-Neither endpoint exposes hostnames, versions or secrets.
+Every route except `/api/health` and `/api/ready` requires a signed-in session (cookie). Errors are `{ "error": { "code", "message" } }` with fixed messages; success is `{ "data": ... }`.
 
-## API contracts
+| Method + path | Behaviour |
+|---|---|
+| `GET /api/me` | The caller's `{ id, email }` |
+| `GET /api/projects[?includeArchived=true]` | Caller's projects (≤100, newest first) |
+| `POST /api/projects` | `{ title, problemStatement }` → 201. Unknown fields are rejected, so the owner can't be smuggled in. |
+| `GET /api/projects/:id` | One project |
+| `PATCH /api/projects/:id` | Any of `{ title, problemStatement, archived }`; `archived:true` archives (idempotent) |
+| `GET /api/projects/:id/runs` | Runs (≤50) |
+| `POST /api/projects/:id/runs` | `{ prompt }` → 201 run with events (synchronous until M3) |
+| `GET /api/runs/:id` | One run plus events |
 
-All private-data endpoints are **unauthenticated until M2**. Responses are `{ "data": ..., "meta": { "persistence": ... } }` on success and `{ "error": { "code", "message" } }` on failure. Messages are fixed strings and never contain exception or driver text.
+Another user's resource returns the **same 404** as a nonexistent one. State-changing requests must come from `APP_ORIGIN`, be `application/json`, and be at most 32 KB.
 
 | Code | HTTP | When |
 |---|---|---|
-| `VALIDATION_ERROR` | 400 | Body missing, malformed JSON, or fails the schema |
-| `NOT_FOUND` | 404 | Unknown **or malformed** project/run ID (malformed IDs never reach storage) |
-| `RUN_FAILED` | 500 | The run could not complete; it is persisted as `status: "failed"` with `errorCode` |
-| `CONFIG_INVALID` | 503 | Server configuration is invalid |
-| `STORAGE_UNAVAILABLE` | 503 | Database unreachable |
-| `INTERNAL_ERROR` | 500 | Anything else (logged with error name/code only) |
+| `UNAUTHENTICATED` | 401 | No valid session |
+| `FORBIDDEN` | 403 | Cross-origin state change |
+| `VALIDATION_ERROR` | 400 | Malformed JSON or invalid/unknown fields |
+| `NOT_FOUND` | 404 | Missing, malformed, or someone else's ID |
+| `PROJECT_ARCHIVED` | 409 | Run on an archived project |
+| `PAYLOAD_TOO_LARGE` / `UNSUPPORTED_MEDIA_TYPE` | 413 / 415 | Body limits |
+| `RATE_LIMITED` | 429 | Hourly per-user cap reached (`Retry-After`) |
+| `RUN_FAILED` | 500 | Run persisted as `failed` with `errorCode` |
+| `CONFIG_INVALID` / `AUTH_UNAVAILABLE` / `STORAGE_UNAVAILABLE` | 503 | Misconfiguration / Auth server down / database down (fail closed) |
+| `INTERNAL_ERROR` | 500 | Anything else (logged by name and code only) |
 
-- `POST /api/projects`: `{ "title": "2–120 chars", "problemStatement": "10–5000 chars" }` → `201` project
-- `GET /api/projects`: up to 100 most recent projects
-- `POST /api/projects/:projectId/runs`: `{ "prompt": "10–8000 chars" }` → `201` run with `events`. *Synchronous in M1. From M3 it returns `202` and the worker executes the run.*
-- `GET /api/projects/:projectId/runs`: up to 50 most recent runs
-- `GET /api/runs/:runId`: one run plus its events
+Auth endpoints (form posts and redirects, not JSON): `POST /auth/sign-in` (always answers "check your email", so it can't reveal which accounts exist), `GET /auth/callback`, `POST /auth/sign-out`.
 
-Run shape: `{ id, projectId, prompt, status: "queued"|"running"|"succeeded"|"failed", result: object|null, errorCode, createdAt, completedAt }`. `result` is a typed object (`reasoning-scaffold.v1`), stored as JSONB. Events carry a per-run `sequence` (1, 2, 3, …), which is the only reliable order.
+## Health and readiness
+
+| Endpoint | Meaning |
+|---|---|
+| `GET /api/health` | 200 when the process serves requests (liveness) |
+| `GET /api/ready` | 200 when config is valid and the database answers within 3 s, otherwise 503 (readiness) |
 
 ## Repository layout
 
 ```text
-src/app/api/            route handlers: health, ready, projects, runs
-src/app/page.tsx        first-slice UI
-src/instrumentation.ts  boot-time configuration check
-src/lib/domain/         types, Zod schemas, deterministic scaffold (pure; no I/O)
-src/lib/server/         config, error contract, logging, repositories, run service
-src/test/               integration-test setup
-scripts/migrate.mjs     SQL migration runner
-supabase/migrations/    schema (plain SQL)
+src/app/api/            JSON API routes
+src/app/auth/           sign-in, callback, sign-out (server-side Supabase Auth)
+src/app/login/          sign-in page
+src/middleware.ts       page protection + session refresh
+src/lib/domain/         types, Zod schemas, deterministic scaffold (pure)
+src/lib/server/         config, auth, HTTP guards, logging, owner-scoped stores, run service
+src/test/               integration setup, test DB helpers, plain-Postgres shim
+scripts/                test DB preparation; CI auth-revocation check
+supabase/               CLI config.toml and migrations
 worker/                 Python worker (skeleton)
-contracts/              cross-service JSON Schemas (from M3)
-docs/decisions/         ADRs
-docs/product/           founding blueprint / PRD
-docs/claude-prompts/    staged engineering prompts
-prompts/runtime/        draft product prompts (unused until M4)
+docs/decisions/         ADRs 001–004
+docs/runbooks/          Supabase environment setup
+docs/security/          data lifecycle: storage, export, deletion, retention
 ```
 
-## Security and reliability gates before real users
+## Gates still open before real users
 
-Still open (milestone in brackets):
-
-1. Authentication; `owner_user_id` on every private row, set from the session [M2]
-2. Server-side authorization on every handler, Postgres RLS, and denied cross-user tests [M2]
-3. Least-privilege DB roles for web and worker (ADR-001 D5); no superuser or service role in the app [M2]
-4. Rate limits and request-size limits on POST endpoints [M2]
-5. Durable runs in the worker: 202 + queue, checkpoints, cancellation, idempotency, budgets [M3]
-6. Provider adapter with token/time/search/spend caps [M4]
-7. Claim/source provenance before any web research [M5]
-8. Export/delete, retention policy, backup/restore test, privacy copy [M6–M8]
-9. Security test suite, Playwright E2E, deployment smoke test, error monitoring [M8]
-
-## Known limitations (M1)
-
-- No auth (see above). Single-user only.
-- Runs execute synchronously in the request; the TypeScript `run-service.ts` is removed when the Python worker takes over (M3).
-- The scaffold does not use the project's problem statement unless it is copied into the prompt.
-- Dev-only advisories remain in `eslint-config-next@15`'s glob dependencies. They clear when moving to Next 16 (`npm audit` without `--omit=dev` shows them).
+1. Durable runs in the worker: 202 + queue, checkpoints, cancellation, idempotency, budgets **[M3]**
+2. Provider adapter with token/time/search/spend caps **[M4]**
+3. Claim/source provenance before web research **[M5]**
+4. In-app export and delete; retention decisions ([data lifecycle](docs/security/data-lifecycle.md)) **[M6]**
+5. Custom SMTP, sign-up policy and other hosted Auth settings ([runbook](docs/runbooks/supabase-setup.md)) **[before pilot]**
+6. Playwright E2E, security review, backup/restore test, monitoring **[M8]**
 
 ## Claude engineering prompt kit
 
-Start with [`CLAUDE.md`](CLAUDE.md), then follow [`docs/claude-prompts/`](docs/claude-prompts/README.md) one stage at a time. The founding spec is [`docs/product/Founding_Blueprint_PRD_Engineering_Handoff.md`](docs/product/Founding_Blueprint_PRD_Engineering_Handoff.md).
+Start with [`CLAUDE.md`](CLAUDE.md), then [`docs/claude-prompts/`](docs/claude-prompts/README.md) one stage at a time. The spec is [`docs/product/Founding_Blueprint_PRD_Engineering_Handoff.md`](docs/product/Founding_Blueprint_PRD_Engineering_Handoff.md).

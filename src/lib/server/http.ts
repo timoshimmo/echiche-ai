@@ -1,20 +1,37 @@
 import { NextResponse } from "next/server";
-import { ConfigError } from "./config";
+import type { CurrentUser } from "@/lib/domain/types";
+import { AuthUnavailableError, getCurrentUser } from "./auth";
+import { ConfigError, getServerConfig } from "./config";
 import { log } from "./log";
+import { ProjectArchivedError, RateLimitError } from "./repository";
 
 /** Stable, client-facing error codes (blueprint §6.2). Messages are fixed strings, never raw exception text. */
 export type ApiErrorCode =
+  | "UNAUTHENTICATED"
+  | "FORBIDDEN"
   | "VALIDATION_ERROR"
   | "NOT_FOUND"
+  | "PROJECT_ARCHIVED"
+  | "PAYLOAD_TOO_LARGE"
+  | "UNSUPPORTED_MEDIA_TYPE"
+  | "RATE_LIMITED"
   | "RUN_FAILED"
   | "CONFIG_INVALID"
+  | "AUTH_UNAVAILABLE"
   | "STORAGE_UNAVAILABLE"
   | "INTERNAL_ERROR";
 
-export function apiError(code: ApiErrorCode, message: string, status: number): NextResponse {
-  return NextResponse.json({ error: { code, message } }, { status });
+const NO_STORE = { "cache-control": "no-store" };
+
+export function apiError(code: ApiErrorCode, message: string, status: number, headers: Record<string, string> = {}): NextResponse {
+  return NextResponse.json({ error: { code, message } }, { status, headers: { ...NO_STORE, ...headers } });
 }
 
+export function ok(data: unknown, status = 200): NextResponse {
+  return NextResponse.json({ data }, { status, headers: NO_STORE });
+}
+
+/** Another owner's resource and a nonexistent one get the same answer. */
 export const notFound = (what: "Project" | "Run") => apiError("NOT_FOUND", `${what} not found.`, 404);
 
 const CONNECTION_ERROR_CODES = new Set(["ECONNREFUSED", "ECONNRESET", "ETIMEDOUT", "ENOTFOUND", "EAI_AGAIN", "CONNECT_TIMEOUT", "CONNECTION_CLOSED", "CONNECTION_ENDED", "CONNECTION_DESTROYED"]);
@@ -33,17 +50,28 @@ export function isStorageUnavailable(error: unknown): boolean {
 }
 
 /**
- * Maps an unexpected error to a safe response and logs it without its message
+ * Maps an error to a safe response and logs it without its message
  * (driver messages can echo user-supplied values).
  */
 export function handleUnexpected(error: unknown, route: string): NextResponse {
   const errorName = error instanceof Error ? error.name : typeof error;
   const errorCode = errorCodeOf(error);
 
+  if (error instanceof RateLimitError) {
+    log("warn", "rate_limited", { route, resource: error.resource });
+    return apiError("RATE_LIMITED", `Too many new ${error.resource} in the last hour. Try again later.`, 429, { "retry-after": String(error.retryAfterSeconds) });
+  }
+  if (error instanceof ProjectArchivedError) {
+    return apiError("PROJECT_ARCHIVED", "This project is archived. Unarchive it to start a run.", 409);
+  }
   if (error instanceof ConfigError) {
     // ConfigError messages name variables, never values, so they are safe to log.
     log("error", "config_invalid", { route, issues: error.issues });
     return apiError("CONFIG_INVALID", "The server is not configured correctly.", 503);
+  }
+  if (error instanceof AuthUnavailableError) {
+    log("error", "auth_unavailable", { route });
+    return apiError("AUTH_UNAVAILABLE", "Sign-in service is temporarily unavailable.", 503);
   }
   if (isStorageUnavailable(error)) {
     log("error", "storage_unavailable", { route, errorName, errorCode });
@@ -53,11 +81,73 @@ export function handleUnexpected(error: unknown, route: string): NextResponse {
   return apiError("INTERNAL_ERROR", "Something went wrong.", 500);
 }
 
-/** Parses a JSON body; returns undefined for missing or malformed JSON. */
-export async function readJson(request: Request): Promise<unknown> {
+/** Resolves the verified user or a ready-to-return 401/503 response. */
+export async function requireUser(route: string): Promise<{ user: CurrentUser } | { response: NextResponse }> {
   try {
-    return await request.json();
-  } catch {
-    return undefined;
+    const user = await getCurrentUser();
+    if (!user) return { response: apiError("UNAUTHENTICATED", "Sign in to continue.", 401) };
+    return { user };
+  } catch (error) {
+    return { response: handleUnexpected(error, route) };
   }
+}
+
+/**
+ * CSRF defence for state-changing requests (in addition to SameSite=Lax cookies):
+ * a browser-sent Origin must match APP_ORIGIN exactly. Requests without Origin
+ * (non-browser clients) carry no ambient cookies in practice and are allowed.
+ */
+export function checkOrigin(request: Request, route: string): NextResponse | null {
+  const origin = request.headers.get("origin");
+  if (origin === null) return null;
+  let expected: string;
+  try {
+    expected = getServerConfig().appOrigin;
+  } catch (error) {
+    return handleUnexpected(error, route);
+  }
+  if (origin === expected) return null;
+  log("warn", "origin_rejected", { route });
+  return apiError("FORBIDDEN", "Cross-origin request rejected.", 403);
+}
+
+export const MAX_JSON_BODY_BYTES = 32 * 1024;
+
+/** Reads a JSON body with content-type and size limits. Returns the value or an error response. */
+export async function readJsonBody(request: Request, maxBytes = MAX_JSON_BODY_BYTES): Promise<{ value: unknown } | { response: NextResponse }> {
+  const contentType = request.headers.get("content-type") ?? "";
+  if (!/^application\/json\s*(;|$)/i.test(contentType)) {
+    return { response: apiError("UNSUPPORTED_MEDIA_TYPE", "Send the request body as application/json.", 415) };
+  }
+  const declared = Number(request.headers.get("content-length") ?? "0");
+  if (declared > maxBytes) return { response: tooLarge(maxBytes) };
+
+  const text = await readTextCapped(request, maxBytes);
+  if (text === null) return { response: tooLarge(maxBytes) };
+  try {
+    return { value: JSON.parse(text) };
+  } catch {
+    return { response: apiError("VALIDATION_ERROR", "Request body is not valid JSON.", 400) };
+  }
+}
+
+const tooLarge = (maxBytes: number) => apiError("PAYLOAD_TOO_LARGE", `Request body must be at most ${maxBytes} bytes.`, 413);
+
+/** Streams the body, aborting once it exceeds maxBytes (content-length can lie or be absent). */
+export async function readTextCapped(request: Request, maxBytes: number): Promise<string | null> {
+  if (!request.body) return "";
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(value);
+  }
+  return new TextDecoder().decode(Buffer.concat(chunks));
 }

@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   web:
-    name: Web (typecheck, lint, unit tests, build, audit)
+    name: Web (typecheck, lint, unit tests, build, audit, bundle scan)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -27,28 +27,33 @@ jobs:
       - run: npm run typecheck
       - run: npm run lint
       - run: npm test
-      # Build deliberately runs without DATABASE_URL: configuration is validated at server start, not build.
+      # Build runs without any runtime configuration: config is validated at server start, not build.
       - run: npm run build
+      - name: Client bundle must not contain server configuration
+        run: |
+          if grep -rlE "DATABASE_URL|SUPABASE_URL|SUPABASE_PUBLISHABLE_KEY|sb_secret_|service_role" .next/static; then
+            echo "::error::Server configuration found in the client bundle"; exit 1
+          fi
       # Production dependencies must be free of high/critical advisories.
       - run: npm audit --omit=dev --audit-level=high
 
   integration:
-    name: Integration (real Postgres 16)
+    name: Integration + RLS (plain Postgres 16 with test shim)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     services:
       postgres:
         image: postgres:16
         env:
-          POSTGRES_USER: echiche
           POSTGRES_PASSWORD: ci-only-placeholder
           POSTGRES_DB: echiche_test
         ports: ["5432:5432"]
         options: >-
-          --health-cmd "pg_isready -U echiche -d echiche_test"
+          --health-cmd "pg_isready -U postgres -d echiche_test"
           --health-interval 5s --health-timeout 5s --health-retries 10
     env:
-      DATABASE_URL: postgresql://echiche:ci-only-placeholder@localhost:5432/echiche_test
+      TEST_ADMIN_DATABASE_URL: postgresql://postgres:ci-only-placeholder@localhost:5432/echiche_test
+      DATABASE_URL: postgresql://echiche_web:test-only-password@localhost:5432/echiche_test
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -56,10 +61,36 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npm run db:migrate
-      # Re-running must be a no-op.
-      - run: npm run db:migrate
+      - run: npm run test:db:prepare
+      # Re-running must be a no-op (migrations already applied).
+      - run: npm run test:db:prepare
       - run: npm run test:integration
+
+  supabase-stack:
+    name: Integration + RLS + auth revocation (real local Supabase stack)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # Starts Postgres, Auth, etc. in Docker and applies supabase/migrations.
+      - run: npx supabase start
+      - name: Export local stack connection details
+        run: |
+          npx supabase status -o env | sed -E 's/^([A-Z_]+)="?([^"]*)"?$/\1=\2/' >> "$GITHUB_ENV"
+      - name: Prepare test roles
+        run: |
+          echo "TEST_ADMIN_DATABASE_URL=$DB_URL" >> "$GITHUB_ENV"
+          echo "DATABASE_URL=$(echo "$DB_URL" | sed -E 's#//[^@]+@#//echiche_web:test-only-password@#')" >> "$GITHUB_ENV"
+          TEST_ADMIN_DATABASE_URL="$DB_URL" npm run test:db:prepare
+      - run: npm run test:integration
+      - run: node scripts/ci/verify-auth-revocation.mjs
+      - if: always()
+        run: npx supabase stop --no-backup
 
   worker:
     name: Worker (ruff, pyright, pytest)

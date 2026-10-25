@@ -3,11 +3,14 @@ import type { ReasoningResult } from "./reasoning";
 
 export type { ReasoningResult, ReasoningStage } from "./reasoning";
 
+/** Owner is implicit (the signed-in user) and never serialised to clients. */
 export type Project = {
   id: string;
   title: string;
   problemStatement: string;
+  archivedAt: string | null;
   createdAt: string;
+  updatedAt: string;
 };
 
 export const RUN_STATUSES = ["queued", "running", "succeeded", "failed"] as const;
@@ -46,8 +49,15 @@ export type CreateProjectInput = {
   problemStatement: string;
 };
 
+/** At least one field. `archived: true` archives (idempotent); `false` unarchives. */
+export type UpdateProjectInput = {
+  title?: string;
+  problemStatement?: string;
+  archived?: boolean;
+};
+
 export type StartRunInput = {
   prompt: string;
 };
 
-export type PersistenceMode = "postgres" | "in-memory-demo";
+export type CurrentUser = { id: string; email: string | null };

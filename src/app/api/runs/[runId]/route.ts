@@ -1,7 +1,6 @@
-import { NextResponse } from "next/server";
 import { resourceIdSchema } from "@/lib/domain/validation";
-import { getRepository, persistenceMode } from "@/lib/server/container";
-import { handleUnexpected, notFound } from "@/lib/server/http";
+import { getStore } from "@/lib/server/container";
+import { handleUnexpected, notFound, ok, requireUser } from "@/lib/server/http";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -9,13 +8,15 @@ export const dynamic = "force-dynamic";
 const ROUTE = "GET /api/runs/:runId";
 
 export async function GET(_request: Request, context: { params: Promise<{ runId: string }> }) {
+  const auth = await requireUser(ROUTE);
+  if ("response" in auth) return auth.response;
   const id = resourceIdSchema.safeParse((await context.params).runId);
   if (!id.success) return notFound("Run");
   try {
-    const repo = getRepository();
+    const repo = getStore().forOwner(auth.user.id);
     const run = await repo.getRun(id.data);
     if (!run) return notFound("Run");
-    return NextResponse.json({ data: { ...run, events: await repo.listEvents(id.data) }, meta: { persistence: persistenceMode() } });
+    return ok({ ...run, events: await repo.listEvents(id.data) });
   } catch (error) {
     return handleUnexpected(error, ROUTE);
   }

@@ -1,9 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
-import type { Project, ThoughtRunWithEvents } from "@/lib/domain/types";
-
-type Readiness = "checking" | "postgres" | "in-memory-demo" | "unavailable";
+import type { CurrentUser, Project, ThoughtRunWithEvents } from "@/lib/domain/types";
 
 const STATUS_LABEL: Record<ThoughtRunWithEvents["status"], string> = {
   queued: "Queued", running: "Running", succeeded: "✓ Succeeded", failed: "✕ Failed"
@@ -18,35 +16,38 @@ export default function HomePage() {
   const [run, setRun] = useState<ThoughtRunWithEvents | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
-  const [readiness, setReadiness] = useState<Readiness>("checking");
+  const [user, setUser] = useState<CurrentUser | null>(null);
 
-  async function checkReadiness() {
-    try {
-      const response = await fetch("/api/ready", { cache: "no-store" });
-      const body = await response.json();
-      setReadiness(response.ok && (body.persistence === "postgres" || body.persistence === "in-memory-demo") ? body.persistence : "unavailable");
-    } catch {
-      setReadiness("unavailable");
+  /** fetch wrapper: a 401 means the session ended, so go back to sign-in. */
+  async function api(path: string, init?: RequestInit) {
+    const response = await fetch(path, { cache: "no-store", ...init });
+    if (response.status === 401) {
+      window.location.assign("/login");
+      throw new Error("Your session has ended. Please sign in again.");
     }
+    return { response, body: await response.json() };
+  }
+
+  async function loadUser() {
+    const { response, body } = await api("/api/me");
+    if (response.ok) setUser(body.data);
   }
 
   async function loadProjects() {
-    const response = await fetch("/api/projects");
-    const body = await response.json();
+    const { response, body } = await api("/api/projects");
     if (!response.ok) throw new Error(body.error?.message ?? "Could not load projects");
     setProjects(body.data);
     if (!selectedId && body.data[0]) setSelectedId(body.data[0].id);
   }
   useEffect(() => {
-    checkReadiness();
+    loadUser().catch(() => {});
     loadProjects().catch(e => setMessage(e.message));
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function createProject(event: FormEvent) {
     event.preventDefault(); setBusy(true); setMessage(""); setRun(null);
     try {
-      const response = await fetch("/api/projects", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ title, problemStatement }) });
-      const body = await response.json();
+      const { response, body } = await api("/api/projects", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ title, problemStatement }) });
       if (!response.ok) throw new Error(body.error?.message ?? "Could not create project");
       setProjects(current => [body.data, ...current]); setSelectedId(body.data.id);
       setTitle(""); setProblemStatement(""); setPrompt(body.data.problemStatement);
@@ -59,8 +60,7 @@ export default function HomePage() {
     event.preventDefault(); if (!selectedId) return;
     setBusy(true); setMessage(""); setRun(null);
     try {
-      const response = await fetch(`/api/projects/${selectedId}/runs`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ prompt }) });
-      const body = await response.json();
+      const { response, body } = await api(`/api/projects/${selectedId}/runs`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ prompt }) });
       if (!response.ok) throw new Error(body.error?.message ?? "Could not run");
       setRun(body.data); setMessage(body.data.status === "succeeded" ? "Thought run completed." : `Thought run ended with status: ${body.data.status}.`);
     } catch (e) { setMessage(e instanceof Error ? e.message : "Something went wrong"); }
@@ -68,19 +68,16 @@ export default function HomePage() {
   }
 
   const result = run?.result ?? null;
-  const modeLabel: Record<Readiness, string> = {
-    checking: "Checking storage…",
-    postgres: "PostgreSQL ready",
-    "in-memory-demo": "Demo storage · resets on restart",
-    unavailable: "Storage unavailable"
-  };
 
   return (
     <main className="shell">
       <header className="topbar">
         <div className="brand-mark">E</div>
         <div><div className="brand">echiche</div><div className="tagline">Deep thought, with continuity.</div></div>
-        <div className="mode"><span className="dot" style={readiness === "unavailable" ? { background: "#c0563f" } : undefined} />{modeLabel[readiness]}</div>
+        <div className="mode">
+          <span className="dot" />{user?.email ?? "Signed in"}
+          <form method="post" action="/auth/sign-out"><button type="submit" className="link-button">Sign out</button></form>
+        </div>
       </header>
       <section className="hero">
         <p className="eyebrow">FOUNDING BUILD · 0.1.0</p>

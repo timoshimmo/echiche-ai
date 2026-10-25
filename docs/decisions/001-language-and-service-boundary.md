@@ -1,6 +1,6 @@
 # ADR-001: Language and service boundary — TypeScript web app + Python AI worker
 
-- Status: Accepted (boundary, 2026-10-23) · D1–D4 Accepted (2026-10-23) · D5–D8 Proposed, pending confirmation
+- Status: Accepted (boundary, 2026-10-23) · D1–D4 Accepted (2026-10-23) · D5 Accepted (2026-10-25, implemented in ADR-004) · D6–D8 Proposed, pending confirmation
 - Date: 2026-10-23
 - Decision owner: Tokmang (engineer / product owner)
 - Related PRD requirement(s): Blueprint §4.1–4.4, §6.3, §7; RUN-01/02/03, AUTH-02, OBS-01, TEST-01
@@ -37,7 +37,7 @@ The starter is a single Next.js/TypeScript app (~400 lines) whose thought runs e
 Rule: **the side that writes a payload owns its schema.** No business rule is implemented on both sides. The current TypeScript `run-service.ts`/`reasoning.ts` are deleted once the Python worker reaches parity (M3); the deterministic engine moves to Python as a test-double provider.
 
 ## Sub-decisions
-D1–D4 were accepted by the decision owner on 2026-10-23. D5–D8 are proposed defaults; confirm or change them before M2 (D5) and M3 (D6–D8).
+D1–D4 were accepted by the decision owner on 2026-10-23 and D5 on 2026-10-25. D6–D8 are proposed defaults; confirm or change them before M3.
 - **D1 Contracts:** Pydantic v2 models are the source for worker-owned payloads (`DecisionBriefV1`, run result, event payloads). They are exported to committed JSON Schema in `contracts/`; TS derives types from those files. CI fails if the generated files are stale. Each payload stores a `schema_version`.
 - **D2 Worker shape:** a plain Python process that claims jobs with `SELECT … FOR UPDATE SKIP LOCKED`, a lease and a heartbeat. No FastAPI until an HTTP need exists; a minimal health check is enough.
 - **D3 Python toolchain:** Python 3.12, `uv`, `ruff`, `pyright` (strict) or `mypy --strict`, `pytest`, `pydantic`, `psycopg[binary]` 3. No SQLAlchemy/Alembic (migrations stay SQL).

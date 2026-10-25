@@ -9,7 +9,7 @@ export async function register() {
   const { log } = await import("@/lib/server/log");
   try {
     const config = getServerConfig();
-    log("info", "config_loaded", { persistence: config.persistence, node_env: config.nodeEnv });
+    log("info", "config_loaded", { node_env: config.nodeEnv, app_origin: config.appOrigin });
   } catch (error) {
     if (error instanceof ConfigError) {
       log("error", "config_invalid", { issues: error.issues });
