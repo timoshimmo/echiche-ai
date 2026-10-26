@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { RunBudget } from "@/lib/domain/types";
 
 /**
  * Web-app configuration, validated once from process.env. Fails closed.
@@ -22,6 +23,8 @@ export type ServerConfig = {
   /** Exact origin the app is served from; used for CSRF origin checks and auth redirects. */
   appOrigin: string;
   limits: { projectsPerHour: number; runsPerHour: number };
+  /** Caps given to every new run, and the amount a user's explicit "resume" adds (never automatic). */
+  runBudget: { initial: RunBudget; resumeIncrement: RunBudget };
   secureCookies: boolean;
 };
 
@@ -34,12 +37,14 @@ const optional = <T extends z.ZodType>(schema: T) => z.preprocess(blankToUndefin
 /** Error message that distinguishes "missing" from "malformed" without echoing the value. */
 const msg = (name: string, rule: string) => (issue: { input?: unknown }) =>
   issue.input === undefined ? `${name} is required` : rule;
-const limit = (name: string, fallback: number) =>
-  z.preprocess(
+const limit = (name: string, fallback: number, min = 1, max = 10000, integer = true) => {
+  const range = `${name} must be between ${min} and ${max}`;
+  const base = z.coerce.number({ error: `${name} must be a number` });
+  return z.preprocess(
     blankToUndefined,
-    z.coerce.number({ error: `${name} must be a number` }).int(`${name} must be an integer`)
-      .min(1, `${name} must be between 1 and 10000`).max(10000, `${name} must be between 1 and 10000`).default(fallback)
+    (integer ? base.int(`${name} must be an integer`) : base).min(min, range).max(max, range).default(fallback)
   );
+};
 
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
@@ -58,7 +63,12 @@ const envSchema = z.object({
   ),
   APP_ORIGIN: optional(z.url({ protocol: /^https?$/, error: "APP_ORIGIN must be an http(s) URL" })),
   PROJECT_CREATE_LIMIT_PER_HOUR: limit("PROJECT_CREATE_LIMIT_PER_HOUR", 30),
-  RUN_CREATE_LIMIT_PER_HOUR: limit("RUN_CREATE_LIMIT_PER_HOUR", 20)
+  RUN_CREATE_LIMIT_PER_HOUR: limit("RUN_CREATE_LIMIT_PER_HOUR", 20),
+  // Per-run caps (blueprint §6.1 example: 18 steps, 8 searches, 600 s). Bounds match the DB checks.
+  RUN_BUDGET_MAX_STEPS: limit("RUN_BUDGET_MAX_STEPS", 18, 1, 1000),
+  RUN_BUDGET_MAX_ACTIVE_SECONDS: limit("RUN_BUDGET_MAX_ACTIVE_SECONDS", 600, 1, 86400),
+  RUN_BUDGET_MAX_RESEARCH_CALLS: limit("RUN_BUDGET_MAX_RESEARCH_CALLS", 8, 0, 1000),
+  RUN_BUDGET_MAX_COST_USD: limit("RUN_BUDGET_MAX_COST_USD", 0.5, 0, 1000, false)
 });
 
 /** True if `key` is a Supabase secret/service-role key rather than a publishable/anon key. */
@@ -113,6 +123,17 @@ export function parseServerConfig(env: Record<string, string | undefined>): Serv
     supabasePublishableKey: e.SUPABASE_PUBLISHABLE_KEY,
     appOrigin,
     limits: { projectsPerHour: e.PROJECT_CREATE_LIMIT_PER_HOUR, runsPerHour: e.RUN_CREATE_LIMIT_PER_HOUR },
+    runBudget: {
+      initial: {
+        maxSteps: e.RUN_BUDGET_MAX_STEPS, maxActiveSeconds: e.RUN_BUDGET_MAX_ACTIVE_SECONDS,
+        maxResearchCalls: e.RUN_BUDGET_MAX_RESEARCH_CALLS, maxCostUsd: e.RUN_BUDGET_MAX_COST_USD
+      },
+      // A resume grants half the initial budget again (rounded up), one explicit approval at a time.
+      resumeIncrement: {
+        maxSteps: Math.ceil(e.RUN_BUDGET_MAX_STEPS / 2), maxActiveSeconds: Math.ceil(e.RUN_BUDGET_MAX_ACTIVE_SECONDS / 2),
+        maxResearchCalls: Math.ceil(e.RUN_BUDGET_MAX_RESEARCH_CALLS / 2), maxCostUsd: Math.round(e.RUN_BUDGET_MAX_COST_USD * 50) / 100
+      }
+    },
     secureCookies: production
   };
 }

@@ -1,0 +1,66 @@
+{
+  "$defs": {
+    "ReasoningStageV1": {
+      "additionalProperties": false,
+      "properties": {
+        "content": {
+          "minLength": 1,
+          "title": "Content",
+          "type": "string"
+        },
+        "stage": {
+          "enum": [
+            "frame",
+            "challenge",
+            "synthesize"
+          ],
+          "title": "Stage",
+          "type": "string"
+        },
+        "title": {
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "stage",
+        "title",
+        "content"
+      ],
+      "title": "ReasoningStageV1",
+      "type": "object"
+    }
+  },
+  "$id": "reasoning-scaffold.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Unchanged from M1/M2 so stored results stay readable. M4 adds DecisionBriefV1.",
+  "properties": {
+    "caveat": {
+      "minLength": 1,
+      "title": "Caveat",
+      "type": "string"
+    },
+    "stages": {
+      "items": {
+        "$ref": "#/$defs/ReasoningStageV1"
+      },
+      "minItems": 1,
+      "title": "Stages",
+      "type": "array"
+    },
+    "summary": {
+      "minLength": 1,
+      "title": "Summary",
+      "type": "string"
+    }
+  },
+  "required": [
+    "summary",
+    "stages",
+    "caveat"
+  ],
+  "title": "ReasoningScaffoldResultV1",
+  "type": "object"
+}

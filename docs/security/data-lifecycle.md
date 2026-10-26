@@ -1,6 +1,6 @@
 # Data lifecycle: what is stored, export, deletion, retention
 
-_Status as of M2 (2026-10-25). Items marked **open** need a decision before the paid pilot (blueprint §8.2)._
+_Status as of M3 (2026-10-26). Items marked **open** need a decision before the paid pilot (blueprint §8.2)._
 
 ## What Echiche stores
 
@@ -10,6 +10,8 @@ _Status as of M2 (2026-10-25). Items marked **open** need a decision before the 
 | Projects (title, problem statement, archived flag) | `echiche.projects` | **Yes**, potentially confidential strategy |
 | Thought runs (prompt, structured result, status) | `echiche.thought_runs` | **Yes** |
 | Run events (stage names and fixed status messages) | `echiche.run_events` | No (fixed strings today) |
+| Stage checkpoints (intermediate stage outputs) | `echiche.run_stage_outputs` | **Yes**: derived from the prompt; deleted with the run |
+| Worker liveness (worker ID, version, current run ID) | `echiche.worker_heartbeats` | No |
 | Application logs | hosting platform stdout | No: route, event, error code, IDs only (enforced in `log.ts` conventions and tests) |
 | Supabase Auth logs | Supabase | Email, IP and user agent (provider-side) |
 

@@ -1,0 +1,47 @@
+# Render Blueprint (ADR-005). Region and plans are chosen once at creation:
+# Render cannot move a service to another region later.
+#
+# Secrets are `sync: false`: Render asks for them when the Blueprint is first created
+# and never reads them from this file. See docs/runbooks/render-deploy.md.
+# Migrations are NOT run here (that would put admin DB credentials in the web
+# service's environment); apply them first, as the runbook describes.
+
+services:
+  - type: web
+    name: echiche-web
+    runtime: node
+    region: frankfurt
+    plan: 1c-2g
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/ready
+    maxShutdownDelaySeconds: 30
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: DATABASE_URL          # as echiche_web (never postgres / a service role)
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_PUBLISHABLE_KEY
+        sync: false
+      - key: APP_ORIGIN            # e.g. https://echiche-web.onrender.com or your domain
+        sync: false
+
+  - type: worker
+    name: echiche-worker
+    runtime: docker
+    region: frankfurt
+    plan: 0.5c-512mb
+    dockerfilePath: ./worker/Dockerfile
+    dockerContext: ./worker
+    # On SIGTERM the worker stops claiming and releases or finishes its current stage.
+    # Keep this above WORKER_STAGE_TIMEOUT_SECONDS.
+    maxShutdownDelaySeconds: 120
+    envVars:
+      - key: DATABASE_URL          # as echiche_worker
+        sync: false
+      - key: WORKER_STAGE_TIMEOUT_SECONDS
+        value: "90"
+      - key: WORKER_LEASE_SECONDS
+        value: "60"

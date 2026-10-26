@@ -1,84 +1,92 @@
 # Implementation and verification status
 
-_Last updated: 2026-10-25 (M2, "Auth, tenancy and data security")_
+_Last updated: 2026-10-26 (M3, "Durable run orchestration")_
 
 "Verified" means the check was actually run, with the stated result, in the environment noted. Code presence alone is not verification.
 
-## Verified locally (Linux, Node 22.22.0, npm 10.9.4, PostgreSQL 16.15, Supabase CLI 2.120.0, Python 3.12.3)
+## Verified locally (Linux, Node 22.22.0, PostgreSQL 16.15, Supabase CLI 2.120.0, Python 3.12.3, uv 0.11)
 
-All of the following were run from a **clean clone** against a **freshly created database**:
+From a **clean clone** against a **fresh database**:
 
 | Check | Result |
 |---|---|
-| `npm ci` | ✅ |
-| `npm run typecheck` · `npm run lint` | ✅ 0 errors · 0 problems |
-| `npm test` (unit, incl. 17 route-level auth/tenancy/hardening tests) | ✅ 39 tests |
-| `npm run build` with no runtime env; client-bundle scan for config/secret names | ✅ · ✅ none found |
-| `npm audit --omit=dev` | ✅ 0 vulnerabilities |
-| `npm run test:db:prepare` from empty (migrations 0001–0003 via Supabase CLI), then re-run | ✅ · ✅ no-op |
-| `npm run test:integration`: 9 repository + 20 RLS tests as `echiche_web` | ✅ 29 tests |
-| Same suite with a **Supabase-like admin role** (non-superuser, CREATEROLE, BYPASSRLS) | ✅ 29 tests |
-| Migration 0003 refuses a database with pre-auth projects and rolls back cleanly | ✅ |
-| Worker: `uv sync --locked`, ruff, ruff format, pyright strict, pytest | ✅ |
+| `npm ci` · typecheck · lint | ✅ · 0 errors · 0 problems |
+| `npm test` (web unit: routes incl. async runs/actions, config, cross-language contract) | ✅ 39 tests |
+| `npm run build` (no env); client-bundle scan; `npm audit --omit=dev` | ✅ · none found · 0 vulnerabilities |
+| `npm run test:db:prepare` from empty (0001–0004 via Supabase CLI), then re-run | ✅ · ✅ no-op |
+| `npm run test:integration`: repository + RLS as `echiche_web`, plus **cross-language E2E** (TS queues → real Python worker → TS reads and accepts) | ✅ 33 tests |
+| Worker: `uv sync --locked`, ruff, ruff format, pyright strict (incl. tests), `contracts --check` | ✅ |
+| Worker unit tests | ✅ 36 tests |
+| Worker integration (as `echiche_worker`) | ✅ 28 tests |
+| Same web and worker integration suites on a **fresh cluster with a Supabase-like admin** (non-superuser, CREATEROLE, BYPASSRLS) | ✅ 33 + 28 |
 
-**Mutation checks** (each protection removed on purpose to prove its tests catch it):
+What the 28 worker integration tests cover:
+- crash mid-run then resume from checkpoint with no duplicate writes;
+- a valid lease blocks takeover, and an expired lease allows it;
+- 6 workers racing for one run, and 8 workers draining 25 runs: each run executes exactly once;
+- a worker that lost its lease cannot write;
+- cancellation between stages, and direct cancellation of queued runs;
+- step and time budget pauses, then an explicit resume continues from the checkpoint;
+- transient retries within a claim; timeouts requeue with backoff, then fail at `max_attempts`;
+- invalid output fails without retry; wrong-stage output; unexpected exceptions;
+- the max-attempts guard; graceful shutdown doesn't consume an attempt;
+- illegal transitions rejected for both roles (backwards moves, end-user shortcuts, budget decreases, clearing a cancel request);
+- heartbeats and the stale-run view; `--once` CLI drain.
 
-| Removed | Result |
-|---|---|
-| App-level owner filter in the in-memory store | 2 route tests fail |
-| CSRF origin check | 1 test fails |
-| RLS on `echiche.projects` | 5 RLS tests fail; repository tests still pass because the app filter holds |
-| App-level owner filter in the Postgres store | repository tests still pass because RLS holds |
+**Bug found and fixed by these tests:** two workers could claim the same queued run. A claimed run stays `queued` until its first stage starts, and `FOR UPDATE` rechecks the predicate against the committed row. The claim query now excludes any run with a live lease. Removing that guard makes the concurrency tests fail (mutation check).
 
-So **each layer independently blocks cross-user access.**
+**Production smoke test** (`next start` in production mode, a continuously running worker process, local HTTPS stand-in for Supabase Auth, real session cookies):
+- 202 with `Location`; Idempotency-Key replay returns 200.
+- The worker ran 3 stages and paused at the 3-step budget. Another user's resume returned 404.
+- The owner's resume raised the caps and continued from the checkpoint to "awaiting review". Accept then gave `completed`, and cancelling the finished run returned 409.
+- Events were sequenced 1–12.
+- On SIGTERM the worker exited cleanly and removed its heartbeat.
 
-**Production-server smoke test** (`next start`, `NODE_ENV=production`, real Postgres, a local HTTPS stand-in for Supabase Auth's `GET /user`, real `@supabase/ssr` session cookies), 19 checks all as expected:
-- An unauthenticated page redirects to `/login`; unauthenticated or forged-token API calls return 401.
-- Another user gets 404 on read and patch, and an empty list.
-- Cross-origin POST returns 403; text/plain POST returns 415.
-- `/auth/callback` doesn't redirect to external URLs.
-- After sign-out the session returns 401 while other users are unaffected.
-- The server refused to start with an http Supabase URL or a non-https `APP_ORIGIN` in production.
+**Worker image:** the Dockerfile's build steps were replayed outside Docker (`uv sync --locked --no-dev`, then the entry point). The production environment has no dev tools, and config exit codes are 0/2. The Docker build itself runs in CI.
 
-## Not yet verified (requires Docker or a hosted project; neither is available in the build environment)
+## Not yet verified (no Docker or hosted accounts in the build environment)
 
-- **The real Supabase stack:** CI job `supabase-stack` (`supabase start`, the same 29 tests, and `scripts/ci/verify-auth-revocation.mjs`, which checks that the real Auth server rejects a token after logout). Confirm the first CI run is green.
-- **GitHub Actions** itself has not run.
-- **The magic-link email round trip** (sign in, mail catcher, callback, `/`): manual check with `npm run db:start` + `npm run dev`.
-- **Hosted staging:** the pooler accepting the custom `echiche_web` role, Auth URL settings, SMTP. See the [runbook](docs/runbooks/supabase-setup.md).
+- **GitHub Actions jobs:** `supabase-stack` (real local Supabase), the worker Docker build/run, and the overall first CI run.
+- **Render deployment:** the Blueprint, the health check, and the Supabase pooler accepting the `echiche_web.<ref>` / `echiche_worker.<ref>` custom roles. See [render-deploy.md](docs/runbooks/render-deploy.md).
+- **The magic-link email round trip** (manual, local stack).
 
 ## Implemented
 
-**M2**
-- Supabase Auth magic-link sign-in, callback and sign-out, all server-side. httpOnly SameSite=Lax cookies. Middleware page protection.
-- Every API route requires a session verified with the Auth server (fails closed with 503 if Auth is down).
-- Owner-scoped storage (`Store.forOwner`) with the same 404 for missing and foreign IDs.
-- Migration 0003:
-  - private `echiche` schema;
-  - `owner_user_id` with composite FKs;
-  - `echiche_end_user`/`echiche_web`/`echiche_worker` roles with column-scoped grants and no DELETE;
-  - FORCE RLS;
-  - Supabase API roles revoked;
-  - account deletion cascades.
-- Project read/update/archive (`GET`/`PATCH /api/projects/:id`), `GET /api/me`.
-- CSRF origin check, JSON content-type requirement, 32 KB streamed body cap, strict schemas (no owner smuggling), exact per-user hourly limits on project and run creation.
-- Fail-closed configuration (rejects service-role/secret keys, enforces https in production). The in-memory runtime mode is removed.
-- Supabase CLI for migrations (ADR-002, accepted). Test DB preparation with a plain-Postgres shim. CI jobs for plain Postgres and the real Supabase stack.
-- Docs: ADR-004, Supabase setup runbook, data-lifecycle doc.
+**M3**
+- **Migration 0004:**
+  - blueprint run states with a per-role transition trigger;
+  - leases, attempts, backoff (`available_at`), budgets and usage, and idempotency keys;
+  - `run_stage_outputs` checkpoints, `worker_heartbeats`, and the `ops_run_health` view;
+  - least-privilege grants: end users can't write results, events or execution fields; the worker can't edit prompts, owners, budgets or `completed_at`.
+- **Python worker:**
+  - claim loop (`SKIP LOCKED` + leases) with a lease-keeper thread;
+  - transactional checkpoints, and lease-guarded writes;
+  - bounded jittered retries, stage timeouts, the failure policy with stable codes, budgets, cancellation;
+  - SIGTERM drain, reconnect with backoff, heartbeats, and `--once` / `--check-config`.
+- **Contracts:** Pydantic models are the source; JSON Schemas are committed; shared fixtures; the TypeScript mirror is checked against them; CI fails on stale schemas.
+- **Web:**
+  - `POST /runs` returns 202 plus Idempotency-Key handling; budgets come from config;
+  - cancel / accept / resume endpoints (idempotent, owner-scoped, CSRF-checked);
+  - safe error-code messages; the UI polls with stage progress and actions.
+  - The TypeScript execution path is removed.
+- **Deployment:** `render.yaml` (Frankfurt; web plus Background Worker; secrets `sync: false`), `worker/Dockerfile` (non-root, locked, no dev tools).
+- **Docs:** ADR-006, ADR-001 D6–D8 accepted, Render deploy runbook, run-operations runbook (SQL verified), README, worker README, data lifecycle.
 
-**M1** (still in place): patched dependencies, error contract, run failure path, typed JSONB results, event sequence, health/readiness, Python worker skeleton.
+**M1–M2** (still in place):
+- patched dependencies;
+- error contract, health/readiness;
+- Supabase Auth magic links, owner scoping plus RLS (private schema, roles), CSRF, size and rate limits;
+- fail-closed config.
 
 ## Known gaps before real users
 
 | Gap | Milestone |
 |---|---|
-| Synchronous runs; no durable worker, cancellation, budgets | M3 |
-| No AI provider or evaluation | M4/M7 |
+| Deterministic (non-LLM) provider only; no evaluation | M4 / M7 |
 | No research provenance | M5 |
 | No in-app export/delete; retention decisions open ([data lifecycle](docs/security/data-lifecycle.md)) | M6 |
+| No alerting on worker heartbeats or stale runs (visibility only); no Playwright E2E | M8 |
+| The UI polls (1.5 s) rather than streaming. Time spent in a timed-out stage isn't added to `active_seconds_used`. | — |
 | Custom SMTP, sign-up policy, hosted Auth settings | before pilot |
-| No pagination beyond the fixed list limits (100 projects, 50 runs) | later |
-| No IP-level rate limiting in the app (use the hosting edge); no Playwright E2E | M8 |
-| One Auth-server round trip per API request (latency and availability dependency; ADR-004 revisit trigger) | — |
 
-Dev-only advisories: `eslint-config-next@15`'s glob dependencies (lint-time only; cleared by the Next 16 config).
+Dev-only advisories: `eslint-config-next@15`'s glob dependencies (lint-time only).

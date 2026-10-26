@@ -20,7 +20,14 @@ def test_valid_config_with_defaults() -> None:
     config = parse_worker_config({"DATABASE_URL": URL_OK})
     assert config.database_url == URL_OK
     assert config.poll_interval_seconds == 2.0
-    assert config.worker_id == "worker-local"
+    assert config.worker_id.startswith("worker-") and len(config.worker_id) <= 64
+    assert config.lease_seconds == 60
+    assert config.stage_timeout_seconds == 120
+
+
+@pytest.mark.parametrize(("name", "value"), [("WORKER_LEASE_SECONDS", "5"), ("WORKER_STAGE_TIMEOUT_SECONDS", "0")])
+def test_rejects_out_of_range_lease_and_timeout(name: str, value: str) -> None:
+    assert any(name in i for i in issues_of({"DATABASE_URL": URL_OK, name: value}))
 
 
 def test_database_url_required_no_in_memory_mode() -> None:
@@ -57,7 +64,7 @@ def test_repr_hides_connection_string() -> None:
 
 def test_log_emits_one_json_line_with_shared_fields() -> None:
     stream = io.StringIO()
-    log("info", "stage_started", stream=stream, run_id="r1", stage="planning")
+    log("info", "stage_started", stream, run_id="r1", stage="planning")
     record = json.loads(stream.getvalue())
     assert record["service"] == "worker"
     assert record["event"] == "stage_started"
@@ -67,11 +74,11 @@ def test_log_emits_one_json_line_with_shared_fields() -> None:
 
 def test_main_exit_codes(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     monkeypatch.delenv("DATABASE_URL", raising=False)
-    assert main() == 2
+    assert main(["--check-config"]) == 2
     assert json.loads(capsys.readouterr().err)["event"] == "config_invalid"
 
     monkeypatch.setenv("DATABASE_URL", URL_OK)
-    assert main() == 0
+    assert main(["--check-config"]) == 0
     out = capsys.readouterr().out
-    assert json.loads(out)["event"] == "worker_skeleton_ready"
+    assert json.loads(out)["event"] == "config_valid"
     assert "placeholder" not in out

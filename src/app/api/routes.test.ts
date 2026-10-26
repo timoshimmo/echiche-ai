@@ -24,6 +24,9 @@ const { GET: getProject, PATCH: patchProject } = await import("./projects/[proje
 const { GET: listRuns, POST: startRun } = await import("./projects/[projectId]/runs/route");
 const { GET: ready } = await import("./ready/route");
 const { GET: getRun } = await import("./runs/[runId]/route");
+const { POST: cancelRun } = await import("./runs/[runId]/cancel/route");
+const { POST: acceptRun } = await import("./runs/[runId]/accept/route");
+const { POST: resumeRun } = await import("./runs/[runId]/resume/route");
 
 const ALICE: CurrentUser = { id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", email: "alice@example.test" };
 const BOB: CurrentUser = { id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", email: "bob@example.test" };
@@ -89,7 +92,10 @@ describe("authentication (AUTH-01)", () => {
       await patchProject(req("/", { method: "PATCH", body: { title: "Nope" } }), params(id)),
       await listRuns(get(), params(id)),
       await startRun(req("/", { body: { prompt: "Should never run at all." } }), params(id)),
-      await getRun(get(), params({ runId: UNKNOWN }))
+      await getRun(get(), params({ runId: UNKNOWN })),
+      await cancelRun(req("/"), params({ runId: UNKNOWN })),
+      await acceptRun(req("/"), params({ runId: UNKNOWN })),
+      await resumeRun(req("/"), params({ runId: UNKNOWN }))
     ];
     for (const response of responses) {
       expect(response.status).toBe(401);
@@ -114,7 +120,7 @@ describe("authentication (AUTH-01)", () => {
 describe("tenant isolation (AUTH-02, PROJ-01)", () => {
   it("lets the owner create, read, update, archive and run their project", async () => {
     const { project, run } = await aliceProjectAndRun();
-    expect(run.status).toBe("succeeded");
+    expect(run.status).toBe("queued");
     expect((await (await getProject(get(), params({ projectId: project.id }))).json()).data.title).toBe("Alice plan");
 
     const renamed = await patchProject(req("/", { method: "PATCH", body: { title: "Renamed" } }), params({ projectId: project.id }));
@@ -226,7 +232,7 @@ describe("request hardening", () => {
     vi.stubEnv("RUN_CREATE_LIMIT_PER_HOUR", "2");
     resetServerConfigForTests();
     const { project } = await aliceProjectAndRun(); // run 1
-    expect((await startRun(req("/", { body: { prompt: "Second run is allowed." } }), params({ projectId: project.id }))).status).toBe(201);
+    expect((await startRun(req("/", { body: { prompt: "Second run is allowed." } }), params({ projectId: project.id }))).status).toBe(202);
     const third = await startRun(req("/", { body: { prompt: "Third run is limited." } }), params({ projectId: project.id }));
     expect(third.status).toBe(429);
     expect(third.headers.get("retry-after")).toBe("3600");
@@ -234,7 +240,7 @@ describe("request hardening", () => {
 
     as(BOB);
     const bobProject = (await (await createProject(req("/", { body: { title: "Bob plan", problemStatement: "Bob's own decision." } }))).json()).data;
-    expect((await startRun(req("/", { body: { prompt: "Bob is not limited by Alice." } }), params({ projectId: bobProject.id }))).status).toBe(201);
+    expect((await startRun(req("/", { body: { prompt: "Bob is not limited by Alice." } }), params({ projectId: bobProject.id }))).status).toBe(202);
   });
 
   it("never returns raw exception messages to clients or logs", async () => {
@@ -278,5 +284,76 @@ describe("health endpoints", () => {
     const response = await ready();
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ status: "ready" });
+  });
+});
+
+describe("asynchronous runs (M3)", () => {
+  it("queues a run and returns 202 with a Location header, without executing it", async () => {
+    as(ALICE);
+    const project = (await (await createProject(req("/", { body: { title: "Async", problemStatement: "Async run behaviour check." } }))).json()).data;
+    const response = await startRun(req("/", { body: { prompt: "What should we test first?" } }), params({ projectId: project.id }));
+    expect(response.status).toBe(202);
+    const run = (await response.json()).data;
+    expect(response.headers.get("location")).toBe(`/api/runs/${run.id}`);
+    expect(run).toMatchObject({ status: "queued", result: null, completedStages: [], budget: { maxSteps: 18, maxActiveSeconds: 600 } });
+    expect(store.events.get(run.id)).toEqual([]);
+  });
+
+  it("replays an Idempotency-Key and rejects reuse for a different request", async () => {
+    as(ALICE);
+    const project = (await (await createProject(req("/", { body: { title: "Idem", problemStatement: "Idempotency key behaviour." } }))).json()).data;
+    const headers = { "idempotency-key": "retry-key-0001" };
+    const first = await startRun(req("/", { body: { prompt: "Same question here" }, headers }), params({ projectId: project.id }));
+    const again = await startRun(req("/", { body: { prompt: "Same question here" }, headers }), params({ projectId: project.id }));
+    expect(first.status).toBe(202);
+    expect(again.status).toBe(200);
+    expect(again.headers.get("idempotent-replayed")).toBe("true");
+    expect((await again.json()).data.id).toBe((await first.json()).data.id);
+    const conflict = await startRun(req("/", { body: { prompt: "A different question" }, headers }), params({ projectId: project.id }));
+    expect(conflict.status).toBe(409);
+    expect(await errorCode(conflict)).toBe("IDEMPOTENCY_CONFLICT");
+    const bad = await startRun(req("/", { body: { prompt: "Bad key format" }, headers: { "idempotency-key": "no spaces allowed" } }), params({ projectId: project.id }));
+    expect(bad.status).toBe(400);
+  });
+
+  it("cancels, accepts and resumes according to run state, idempotently", async () => {
+    const { run } = await aliceProjectAndRun();
+    // queued → cancelled at once
+    expect((await (await cancelRun(req("/"), params({ runId: run.id }))).json()).data.status).toBe("cancelled");
+    expect((await cancelRun(req("/"), params({ runId: run.id }))).status).toBe(200);
+    const notPaused = await resumeRun(req("/"), params({ runId: run.id }));
+    expect(notPaused.status).toBe(409);
+    expect(await errorCode(notPaused)).toBe("RUN_STATE_CONFLICT");
+
+    const { run: active } = await aliceProjectAndRun();
+    store.simulateWorker(active.id, { status: "critiquing" });
+    const requested = (await (await cancelRun(req("/"), params({ runId: active.id }))).json()).data;
+    expect(requested).toMatchObject({ status: "critiquing", cancelRequested: true });
+
+    const { run: paused } = await aliceProjectAndRun();
+    store.simulateWorker(paused.id, { status: "paused_for_budget", errorCode: "BUDGET_STEPS" });
+    const resumed = (await (await resumeRun(req("/"), params({ runId: paused.id }))).json()).data;
+    expect(resumed).toMatchObject({ status: "queued", errorCode: null, budget: { maxSteps: 27, maxActiveSeconds: 900 } });
+
+    const { run: review } = await aliceProjectAndRun();
+    store.simulateWorker(review.id, { status: "awaiting_user_review" });
+    expect((await (await acceptRun(req("/"), params({ runId: review.id }))).json()).data.status).toBe("completed");
+    expect((await cancelRun(req("/"), params({ runId: review.id }))).status).toBe(409);
+  });
+
+  it("denies run actions on another user's run and from another origin", async () => {
+    const { run } = await aliceProjectAndRun();
+    as(BOB);
+    for (const response of [
+      await cancelRun(req("/"), params({ runId: run.id })),
+      await acceptRun(req("/"), params({ runId: run.id })),
+      await resumeRun(req("/"), params({ runId: run.id }))
+    ]) {
+      expect(response.status).toBe(404);
+    }
+    as(ALICE);
+    const evil = await cancelRun(req("/", { headers: { origin: "https://evil.example" } }), params({ runId: run.id }));
+    expect(evil.status).toBe(403);
+    expect(store.runs.get(run.id)?.status).toBe("queued");
   });
 });

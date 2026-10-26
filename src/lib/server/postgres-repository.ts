@@ -1,13 +1,13 @@
 import postgres from "postgres";
 import { REASONING_RESULT_SCHEMA_VERSION, reasoningResultSchema } from "@/lib/domain/reasoning";
 import {
-  RUN_EVENT_TYPES, RUN_STATUSES,
-  type CreateProjectInput, type Project, type ReasoningResult, type RunEvent, type StartRunInput, type ThoughtRun,
-  type UpdateProjectInput
+  RUN_EVENT_TYPES, RUN_STAGES, RUN_STATUSES,
+  type CreateProjectInput, type Project, type ReasoningResult, type RunBudget, type RunEvent, type StartRunInput,
+  type ThoughtRun, type UpdateProjectInput
 } from "@/lib/domain/types";
 import {
-  assertOwnerId, DataIntegrityError, ProjectArchivedError, RateLimitError, RunStateError,
-  type AppendEventInput, type OwnerScopedRepository, type Store
+  ACTIVE_STATUSES, assertOwnerId, DataIntegrityError, IdempotencyConflictError, ProjectArchivedError, RateLimitError,
+  RunStateError, type CreateRunOptions, type OwnerScopedRepository, type Store
 } from "./repository";
 
 type Sql = ReturnType<typeof postgres>;
@@ -18,7 +18,10 @@ type ProjectRow = {
 };
 type RunRow = {
   id: string; project_id: string; prompt: string; status: string; result: unknown;
-  result_schema_version: string | null; error_code: string | null; created_at: Date; completed_at: Date | null;
+  result_schema_version: string | null; error_code: string | null; cancel_requested_at: Date | null; attempt: number;
+  budget_max_steps: number; budget_max_active_seconds: number; budget_max_research_calls: number; budget_max_cost_usd: string;
+  steps_used: number; active_seconds_used: string; research_calls_used: number; cost_usd_used: string;
+  completed_stages: string[]; created_at: Date; started_at: Date | null; updated_at: Date; completed_at: Date | null;
 };
 type EventRow = { id: string; run_id: string; sequence: number; event_type: string; stage: string; message: string; created_at: Date };
 
@@ -36,6 +39,12 @@ function clientFor(databaseUrl: string): Sql {
 }
 
 const PROJECT_COLUMNS = "id, title, problem_statement, archived_at, created_at, updated_at";
+const RUN_COLUMNS = `r.id, r.project_id, r.prompt, r.status, r.result, r.result_schema_version, r.error_code,
+  r.cancel_requested_at, r.attempt, r.budget_max_steps, r.budget_max_active_seconds, r.budget_max_research_calls,
+  r.budget_max_cost_usd, r.steps_used, r.active_seconds_used, r.research_calls_used, r.cost_usd_used,
+  r.created_at, r.started_at, r.updated_at, r.completed_at,
+  coalesce((select array_agg(o.stage) from echiche.run_stage_outputs o
+             where o.run_id = r.id and o.owner_user_id = r.owner_user_id), '{}') as completed_stages`;
 
 function asProject(row: ProjectRow): Project {
   return {
@@ -44,6 +53,8 @@ function asProject(row: ProjectRow): Project {
     createdAt: row.created_at.toISOString(), updatedAt: row.updated_at.toISOString()
   };
 }
+
+const iso = (d: Date | null) => (d ? d.toISOString() : null);
 
 function asRun(row: RunRow): ThoughtRun {
   const status = RUN_STATUSES.find(s => s === row.status);
@@ -55,9 +66,21 @@ function asRun(row: RunRow): ThoughtRun {
     if (!parsed.success) throw new DataIntegrityError("thought_run.result", row.id);
     result = parsed.data;
   }
+  const done = new Set(row.completed_stages);
   return {
     id: row.id, projectId: row.project_id, prompt: row.prompt, status, result, errorCode: row.error_code,
-    createdAt: row.created_at.toISOString(), completedAt: row.completed_at ? row.completed_at.toISOString() : null
+    cancelRequested: row.cancel_requested_at !== null, attempt: row.attempt,
+    budget: {
+      maxSteps: row.budget_max_steps, maxActiveSeconds: row.budget_max_active_seconds,
+      maxResearchCalls: row.budget_max_research_calls, maxCostUsd: Number(row.budget_max_cost_usd)
+    },
+    usage: {
+      steps: row.steps_used, activeSeconds: Number(row.active_seconds_used),
+      researchCalls: row.research_calls_used, costUsd: Number(row.cost_usd_used)
+    },
+    completedStages: RUN_STAGES.filter(stage => done.has(stage)),
+    createdAt: row.created_at.toISOString(), startedAt: iso(row.started_at), updatedAt: row.updated_at.toISOString(),
+    completedAt: iso(row.completed_at)
   };
 }
 
@@ -155,52 +178,67 @@ class PostgresOwnerRepository implements OwnerScopedRepository {
     });
   }
 
-  async createRun(projectId: string, input: StartRunInput, maxPerHour: number): Promise<ThoughtRun | null> {
+  async createRun(projectId: string, input: StartRunInput, options: CreateRunOptions) {
     return this.tx(async tx => {
+      if (options.idempotencyKey) {
+        const replay = await this.findByIdempotencyKey(tx, options.idempotencyKey);
+        if (replay) {
+          if (replay.projectId !== projectId || replay.prompt !== input.prompt) throw new IdempotencyConflictError();
+          return { run: replay, created: false };
+        }
+      }
       const [project] = await tx<{ archived_at: Date | null }[]>`
         select archived_at from echiche.projects where id = ${projectId} and owner_user_id = ${this.ownerId}`;
       if (!project) return null;
       if (project.archived_at) throw new ProjectArchivedError(projectId);
-      await this.enforceHourlyLimit(tx, "runs", maxPerHour);
-      const [row] = await tx<RunRow[]>`
-        insert into echiche.thought_runs (owner_user_id, project_id, prompt, status)
-        values (${this.ownerId}, ${projectId}, ${input.prompt}, 'running')
-        returning *`;
-      return asRun(row);
+      // Takes the per-owner advisory lock, which also serialises same-key retries.
+      await this.enforceHourlyLimit(tx, "runs", options.maxPerHour);
+      if (options.idempotencyKey) {
+        const raced = await this.findByIdempotencyKey(tx, options.idempotencyKey);
+        if (raced) {
+          if (raced.projectId !== projectId || raced.prompt !== input.prompt) throw new IdempotencyConflictError();
+          return { run: raced, created: false };
+        }
+      }
+      const b = options.budget;
+      const [inserted] = await tx<{ id: string }[]>`
+        insert into echiche.thought_runs
+          (owner_user_id, project_id, prompt, idempotency_key,
+           budget_max_steps, budget_max_active_seconds, budget_max_research_calls, budget_max_cost_usd)
+        values (${this.ownerId}, ${projectId}, ${input.prompt}, ${options.idempotencyKey ?? null},
+                ${b.maxSteps}, ${b.maxActiveSeconds}, ${b.maxResearchCalls}, ${b.maxCostUsd})
+        returning id`;
+      return { run: (await this.selectRun(tx, inserted.id))!, created: true };
     });
   }
 
+  private async findByIdempotencyKey(tx: Tx, key: string): Promise<ThoughtRun | null> {
+    const [row] = await tx<RunRow[]>`
+      select ${tx.unsafe(RUN_COLUMNS)} from echiche.thought_runs r
+       where r.owner_user_id = ${this.ownerId} and r.idempotency_key = ${key}`;
+    return row ? asRun(row) : null;
+  }
+
+  private async selectRun(tx: Tx, id: string, lock = false): Promise<ThoughtRun | null> {
+    const [row] = lock
+      ? await tx<RunRow[]>`select ${tx.unsafe(RUN_COLUMNS)} from echiche.thought_runs r
+                            where r.id = ${id} and r.owner_user_id = ${this.ownerId} for update of r`
+      : await tx<RunRow[]>`select ${tx.unsafe(RUN_COLUMNS)} from echiche.thought_runs r
+                            where r.id = ${id} and r.owner_user_id = ${this.ownerId}`;
+    return row ? asRun(row) : null;
+  }
+
   async getRun(id: string): Promise<ThoughtRun | null> {
-    return this.tx(async tx => {
-      const [row] = await tx<RunRow[]>`select * from echiche.thought_runs where id = ${id} and owner_user_id = ${this.ownerId}`;
-      return row ? asRun(row) : null;
-    });
+    return this.tx(tx => this.selectRun(tx, id));
   }
 
   async listRuns(projectId: string): Promise<ThoughtRun[]> {
     return this.tx(async tx => {
       const rows = await tx<RunRow[]>`
-        select * from echiche.thought_runs where project_id = ${projectId} and owner_user_id = ${this.ownerId}
-         order by created_at desc limit 50`;
+        select ${tx.unsafe(RUN_COLUMNS)} from echiche.thought_runs r
+         where r.project_id = ${projectId} and r.owner_user_id = ${this.ownerId}
+         order by r.created_at desc limit 50`;
       return rows.map(asRun);
-    });
-  }
-
-  async appendEvent(input: AppendEventInput): Promise<RunEvent> {
-    return this.tx(async tx => {
-      // The insert's composite FK (run_id, owner_user_id) rejects runs owned by anyone else;
-      // check first so callers get a domain error rather than a constraint violation.
-      const [owned] = await tx`select 1 from echiche.thought_runs where id = ${input.runId} and owner_user_id = ${this.ownerId}`;
-      if (!owned) throw new RunStateError(input.runId, "owned");
-      const [row] = await tx<EventRow[]>`
-        insert into echiche.run_events (owner_user_id, run_id, sequence, event_type, stage, message)
-        values (
-          ${this.ownerId}, ${input.runId},
-          (select coalesce(max(sequence), 0) + 1 from echiche.run_events where run_id = ${input.runId} and owner_user_id = ${this.ownerId}),
-          ${input.type}, ${input.stage}, ${input.message}
-        )
-        returning *`;
-      return asEvent(row);
     });
   }
 
@@ -212,28 +250,49 @@ class PostgresOwnerRepository implements OwnerScopedRepository {
     });
   }
 
-  async completeRun(runId: string, result: ReasoningResult): Promise<ThoughtRun> {
-    const validated = reasoningResultSchema.parse(result);
+  async cancelRun(runId: string): Promise<ThoughtRun | null> {
     return this.tx(async tx => {
-      const [row] = await tx<RunRow[]>`
-        update echiche.thought_runs
-           set status = 'succeeded', result = ${tx.json(validated)},
-               result_schema_version = ${REASONING_RESULT_SCHEMA_VERSION}, completed_at = now()
-         where id = ${runId} and owner_user_id = ${this.ownerId} and status = 'running'
-        returning *`;
-      if (!row) throw new RunStateError(runId, "running");
-      return asRun(row);
+      const run = await this.selectRun(tx, runId, true);
+      if (!run) return null;
+      if (run.status === "cancelled") return run;
+      if (run.status === "queued" || run.status === "paused_for_budget") {
+        await tx`update echiche.thought_runs set status = 'cancelled' where id = ${runId} and owner_user_id = ${this.ownerId}`;
+      } else if ((ACTIVE_STATUSES as readonly string[]).includes(run.status)) {
+        if (run.cancelRequested) return run;
+        await tx`update echiche.thought_runs set cancel_requested_at = now() where id = ${runId} and owner_user_id = ${this.ownerId}`;
+      } else {
+        throw new RunStateError(runId, run.status);
+      }
+      return this.selectRun(tx, runId);
     });
   }
 
-  async failRun(runId: string, errorCode: string): Promise<ThoughtRun> {
+  async acceptRun(runId: string): Promise<ThoughtRun | null> {
     return this.tx(async tx => {
-      const [row] = await tx<RunRow[]>`
-        update echiche.thought_runs set status = 'failed', error_code = ${errorCode}, completed_at = now()
-         where id = ${runId} and owner_user_id = ${this.ownerId} and status = 'running'
-        returning *`;
-      if (!row) throw new RunStateError(runId, "running");
-      return asRun(row);
+      const run = await this.selectRun(tx, runId, true);
+      if (!run) return null;
+      if (run.status === "completed") return run;
+      if (run.status !== "awaiting_user_review") throw new RunStateError(runId, run.status);
+      await tx`update echiche.thought_runs set status = 'completed' where id = ${runId} and owner_user_id = ${this.ownerId}`;
+      return this.selectRun(tx, runId);
+    });
+  }
+
+  async resumeRun(runId: string, increment: RunBudget): Promise<ThoughtRun | null> {
+    return this.tx(async tx => {
+      const run = await this.selectRun(tx, runId, true);
+      if (!run) return null;
+      if (run.status === "queued" || (ACTIVE_STATUSES as readonly string[]).includes(run.status)) return run;
+      if (run.status !== "paused_for_budget") throw new RunStateError(runId, run.status);
+      await tx`
+        update echiche.thought_runs
+           set status = 'queued',
+               budget_max_steps = budget_max_steps + ${increment.maxSteps},
+               budget_max_active_seconds = budget_max_active_seconds + ${increment.maxActiveSeconds},
+               budget_max_research_calls = budget_max_research_calls + ${increment.maxResearchCalls},
+               budget_max_cost_usd = budget_max_cost_usd + ${increment.maxCostUsd}
+         where id = ${runId} and owner_user_id = ${this.ownerId}`;
+      return this.selectRun(tx, runId);
     });
   }
 }

@@ -42,11 +42,12 @@ beforeEach(async () => {
     insert into echiche.projects (owner_user_id, title, problem_statement)
     values (${alice}, 'Alice plan', 'Alice confidential decision') returning id`);
   [{ id: aliceRun }] = await asUser(alice, tx => tx`
-    insert into echiche.thought_runs (owner_user_id, project_id, prompt, status)
-    values (${alice}, ${aliceProject}, 'Alice private question', 'running') returning id`);
-  await asUser(alice, tx => tx`
+    insert into echiche.thought_runs (owner_user_id, project_id, prompt)
+    values (${alice}, ${aliceProject}, 'Alice private question') returning id`);
+  // Events are written by the worker only (M3); seed one as an operator.
+  await admin`
     insert into echiche.run_events (owner_user_id, run_id, sequence, event_type, stage, message)
-    values (${alice}, ${aliceRun}, 1, 'status', 'started', 'started')`);
+    values (${alice}, ${aliceRun}, 1, 'status', 'started', 'started')`;
 });
 
 afterAll(async () => {
@@ -122,13 +123,19 @@ describe("INSERT", () => {
   it("denied: attaching a child row to another user's parent (composite FK + RLS)", async () => {
     // Bob claims ownership of a run on Alice's project: the (project_id, owner) FK has no match.
     await expect(asUser(bob, tx => tx`
-      insert into echiche.thought_runs (owner_user_id, project_id, prompt, status) values (${bob}, ${aliceProject}, 'Bob on Alice project', 'running')`))
-      .rejects.toMatchObject({ code: "23503" });
-    await expect(asUser(bob, tx => tx`
-      insert into echiche.run_events (owner_user_id, run_id, sequence, event_type, stage, message) values (${bob}, ${aliceRun}, 2, 'stage', 'x', 'x')`))
+      insert into echiche.thought_runs (owner_user_id, project_id, prompt) values (${bob}, ${aliceProject}, 'Bob on Alice project')`))
       .rejects.toMatchObject({ code: "23503" });
     // ...and claiming Alice as owner is stopped by RLS.
     await expect(asUser(bob, tx => tx`
+      insert into echiche.thought_runs (owner_user_id, project_id, prompt) values (${alice}, ${aliceProject}, 'Bob as Alice')`))
+      .rejects.toMatchObject(PERMISSION_DENIED);
+  });
+
+  it("denied: runs can only be created as queued, and run events are worker-only", async () => {
+    await expect(asUser(alice, tx => tx`
+      insert into echiche.thought_runs (owner_user_id, project_id, prompt, status) values (${alice}, ${aliceProject}, 'Skip the queue', 'completed')`))
+      .rejects.toMatchObject(PERMISSION_DENIED);
+    await expect(asUser(alice, tx => tx`
       insert into echiche.run_events (owner_user_id, run_id, sequence, event_type, stage, message) values (${alice}, ${aliceRun}, 2, 'stage', 'x', 'x')`))
       .rejects.toMatchObject(PERMISSION_DENIED);
   });
@@ -149,7 +156,7 @@ describe("UPDATE", () => {
   it("denied: another user's update matches zero rows", async () => {
     const rows = await asUser(bob, tx => tx`update echiche.projects set title = 'Hijacked' returning id`);
     expect(rows).toHaveLength(0);
-    const runs = await asUser(bob, tx => tx`update echiche.thought_runs set status = 'succeeded' returning id`);
+    const runs = await asUser(bob, tx => tx`update echiche.thought_runs set status = 'cancelled' returning id`);
     expect(runs).toHaveLength(0);
     const [check] = await admin`select title from echiche.projects where id = ${aliceProject}`;
     expect(check.title).toBe("Alice plan");
@@ -158,6 +165,11 @@ describe("UPDATE", () => {
   it("denied: ownership cannot be reassigned (owner_user_id is not updatable)", async () => {
     await expect(asUser(alice, tx => tx`update echiche.projects set owner_user_id = ${bob} where id = ${aliceProject}`))
       .rejects.toMatchObject(PERMISSION_DENIED);
+  });
+
+  it("denied: end users cannot write results or execution fields", async () => {
+    await expect(asUser(alice, tx => tx`update echiche.thought_runs set result = '{}'::jsonb`)).rejects.toMatchObject(PERMISSION_DENIED);
+    await expect(asUser(alice, tx => tx`update echiche.thought_runs set steps_used = 0, claimed_by = 'me'`)).rejects.toMatchObject(PERMISSION_DENIED);
   });
 
   it("denied: run events are append-only for end users", async () => {
@@ -188,8 +200,10 @@ describe("worker role (used from M3)", () => {
   it("reads across owners and records execution facts, but cannot create projects or delete", async () => {
     const seen = await asRole("echiche_worker", tx => tx`select count(*)::int as n from echiche.thought_runs`);
     expect(seen[0].n).toBe(1);
-    const updated = await asRole("echiche_worker", tx => tx`update echiche.thought_runs set status = 'failed', error_code = 'RUN_FAILED', completed_at = now() where id = ${aliceRun} returning id`);
+    const updated = await asRole("echiche_worker", tx => tx`update echiche.thought_runs set status = 'failed', error_code = 'RUN_FAILED' where id = ${aliceRun} returning id, completed_at`);
     expect(updated).toHaveLength(1);
+    expect(updated[0].completed_at).not.toBeNull(); // maintained by the transition trigger
+    await expect(asRole("echiche_worker", tx => tx`update echiche.thought_runs set completed_at = now()`)).rejects.toMatchObject(PERMISSION_DENIED);
     await expect(asRole("echiche_worker", tx => tx`insert into echiche.projects (owner_user_id, title, problem_statement) values (${alice}, 'x', 'xxxxxxxxxx')`))
       .rejects.toMatchObject(PERMISSION_DENIED);
     await expect(asRole("echiche_worker", tx => tx`delete from echiche.run_events`)).rejects.toMatchObject(PERMISSION_DENIED);

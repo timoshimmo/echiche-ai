@@ -1,19 +1,29 @@
-# Echiche (starter, milestone M2)
+# Echiche (starter, milestone M3)
 
-**Version:** 0.1.0 · **Stage:** M2 "Auth, tenancy and data security" done; next is M3 (durable runs in the Python worker).
+**Version:** 0.3.0 · **Stage:** M3 "Durable run orchestration" done; next is M4 (provider adapter and prompt registry).
 
-> **Not production-ready, but no longer single-user.** Sign-in (Supabase Auth magic links), per-user ownership, row-level security and CSRF/size/rate limits are in place and tested. Still missing before real users: durable background runs (M3), an evaluated AI provider (M4+), export/delete in the app (M6), and the release gates in [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md).
+> **Not production-ready yet.** Already in place:
+> - sign-in, per-user isolation (app checks plus row-level security), and CSRF/size/rate limits (M2);
+> - durable background runs in the Python worker, with checkpoints, leases, retries, cancellation and budgets (M3).
+>
+> Still missing before real users: an evaluated AI provider (M4+), research provenance (M5), export/delete in the app (M6), and the release gates in [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md).
 
 ## Architecture
 
 - **`/` (Next.js 15, TypeScript):** UI, API, authentication and authorization ([ADR-004](docs/decisions/004-auth-and-tenancy.md)).
-- **`worker/` (Python 3.12):** owns run execution from M3 ([ADR-001](docs/decisions/001-language-and-service-boundary.md)). Skeleton today.
+- **`worker/` (Python 3.12):** owns run execution ([ADR-001](docs/decisions/001-language-and-service-boundary.md), [ADR-006](docs/decisions/006-durable-run-orchestration.md)). It claims queued runs from Postgres and runs the five stages durably.
 - **`supabase/`:** Supabase CLI config and SQL migrations, the single source of schema truth ([ADR-002](docs/decisions/002-migration-tooling.md)).
-- **`contracts/`:** versioned JSON Schemas shared by both services (from M3).
+- **`contracts/`:** versioned JSON Schemas shared by both services. Pydantic is the source; the TypeScript mirror is checked against it in CI.
+- **Hosting:** Render, Frankfurt: web service plus Background Worker ([ADR-005](docs/decisions/005-hosting.md), `render.yaml`).
 
 Data lives in a private Postgres schema `echiche`. It's reachable only through the app, which connects as `echiche_web` and runs each request as `echiche_end_user` with the caller's identity, so RLS enforces ownership in the database as well as in code. The Supabase publishable key cannot reach it.
 
-Runs still execute **synchronously in the API request** with a deterministic, non-LLM scaffold. The UI says so.
+How a run flows:
+1. `POST` returns **202** with a queued run.
+2. The worker claims it, works through planning → research → critique → verification → synthesis, and saves a checkpoint after each stage.
+3. The run ends at **awaiting review**. The UI polls for progress, and the user accepts, cancels, or approves more budget.
+
+The reasoning is still the deterministic, **non-LLM** scaffold, and the UI says so.
 
 ## Requirements
 
@@ -33,6 +43,10 @@ TEST_ADMIN_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres 
 
 cp .env.example .env.local       # then paste the publishable key into SUPABASE_PUBLISHABLE_KEY
 npm run dev                      # http://localhost:3000 → redirects to /login
+
+# In a second terminal: the worker that executes runs
+cd worker && uv sync --locked
+DATABASE_URL=postgresql://echiche_worker:test-only-password@127.0.0.1:54322/postgres uv run echiche-worker
 ```
 
 Sign in with any email address. The local stack doesn't send real email: open the mail-catcher URL from `supabase status` and click the link.
@@ -50,12 +64,18 @@ Useful commands: `npm run db:reset` (recreate and re-migrate), `npm run db:new-m
 | `SUPABASE_PUBLISHABLE_KEY` | always | Publishable/anon key. Secret or service-role keys are rejected. |
 | `APP_ORIGIN` | production | Exact https origin; used for CSRF checks and auth redirects |
 | `PROJECT_CREATE_LIMIT_PER_HOUR`, `RUN_CREATE_LIMIT_PER_HOUR` | no | Per-user caps, default 30 / 20 |
+| `RUN_BUDGET_MAX_STEPS` / `_ACTIVE_SECONDS` / `_RESEARCH_CALLS` / `_COST_USD` | no | Per-run caps, default 18 / 600 / 8 / 0.50 |
+
+Worker variables are in [`worker/README.md`](worker/README.md).
 
 The server validates configuration at start-up:
 - **Production:** it exits on any problem, including `SUPABASE_SERVICE_ROLE_KEY` being present at all.
 - **Development:** it keeps serving, and API calls return `503 CONFIG_INVALID`.
 
-Hosted setup (role passwords, Auth URLs, SMTP, Data API exposure) is a manual checklist: [`docs/runbooks/supabase-setup.md`](docs/runbooks/supabase-setup.md).
+Hosted setup:
+- **Supabase** (role passwords, Auth URLs, SMTP, Data API exposure): [`supabase-setup.md`](docs/runbooks/supabase-setup.md)
+- **Render** (Blueprint, migrations-first deploys): [`render-deploy.md`](docs/runbooks/render-deploy.md)
+- **Stuck runs and worker health:** [`run-operations.md`](docs/runbooks/run-operations.md)
 
 ## Commands
 
@@ -64,16 +84,17 @@ Hosted setup (role passwords, Auth URLs, SMTP, Data API exposure) is a manual ch
 | `npm run dev` / `npm run build` / `npm start` | Develop / build (needs no env) / serve (needs valid env) |
 | `npm run typecheck` · `npm run lint` · `npm test` | Static checks; unit tests (no database, no network) |
 | `npm run test:db:prepare` | Prepares a **disposable** database from `TEST_ADMIN_DATABASE_URL`: adds a test-only Supabase shim if needed, applies migrations via the Supabase CLI, sets test role passwords |
-| `npm run test:integration` | Repository and RLS tests as the real runtime role. Needs `DATABASE_URL` (echiche_web) and `TEST_ADMIN_DATABASE_URL`. Truncates data, so disposable databases only. |
+| `npm run test:integration` | Repository and RLS tests as the real runtime role, plus the cross-language E2E (web queues → Python worker runs → web reads). Needs `DATABASE_URL` (echiche_web), `WORKER_TEST_DATABASE_URL` (echiche_worker) and `TEST_ADMIN_DATABASE_URL`. Truncates data, so disposable databases only. |
+| `cd worker && uv run pytest -m integration` | Worker durability: crash/resume, concurrent claims, leases, cancellation, budgets, timeouts, state-machine enforcement |
 
 CI (`.github/workflows/ci.yml`) has four jobs:
 
 | Job | Runs |
 |---|---|
 | **web** | typecheck, lint, unit tests, build, client-bundle secret scan, production `npm audit` |
-| **integration** | plain Postgres 16 with the test shim |
+| **integration** | plain Postgres 16 with the test shim: web integration, cross-language E2E, worker integration |
 | **supabase-stack** | the real local Supabase stack: integration and RLS suites, plus a check that the Auth server rejects a token after logout |
-| **worker** | ruff, pyright strict, pytest |
+| **worker** | ruff, pyright strict, pytest, contract-schema freshness, Docker image build and start |
 
 ## API
 
@@ -87,8 +108,11 @@ Every route except `/api/health` and `/api/ready` requires a signed-in session (
 | `GET /api/projects/:id` | One project |
 | `PATCH /api/projects/:id` | Any of `{ title, problemStatement, archived }`; `archived:true` archives (idempotent) |
 | `GET /api/projects/:id/runs` | Runs (≤50) |
-| `POST /api/projects/:id/runs` | `{ prompt }` → 201 run with events (synchronous until M3) |
-| `GET /api/runs/:id` | One run plus events |
+| `POST /api/projects/:id/runs` | `{ prompt }` → **202** queued run plus `Location`. Optional `Idempotency-Key` header: a same-request replay returns 200; a different body returns 409. |
+| `GET /api/runs/:id` | Run (status, completed stages, budget, usage, error code) plus events. Poll this. |
+| `POST /api/runs/:id/cancel` | Queued or paused: cancelled now. Active: stops at the next stage. Idempotent. |
+| `POST /api/runs/:id/accept` | awaiting review → completed |
+| `POST /api/runs/:id/resume` | Budget-paused → queued, raising the caps (the user's explicit approval) |
 
 Another user's resource returns the **same 404** as a nonexistent one. State-changing requests must come from `APP_ORIGIN`, be `application/json`, and be at most 32 KB.
 
@@ -99,6 +123,7 @@ Another user's resource returns the **same 404** as a nonexistent one. State-cha
 | `VALIDATION_ERROR` | 400 | Malformed JSON or invalid/unknown fields |
 | `NOT_FOUND` | 404 | Missing, malformed, or someone else's ID |
 | `PROJECT_ARCHIVED` | 409 | Run on an archived project |
+| `RUN_STATE_CONFLICT` / `IDEMPOTENCY_CONFLICT` | 409 | Action not allowed in the run's state / key reused for a different request |
 | `PAYLOAD_TOO_LARGE` / `UNSUPPORTED_MEDIA_TYPE` | 413 / 415 | Body limits |
 | `RATE_LIMITED` | 429 | Hourly per-user cap reached (`Retry-After`) |
 | `RUN_FAILED` | 500 | Run persisted as `failed` with `errorCode` |
@@ -126,20 +151,21 @@ src/lib/server/         config, auth, HTTP guards, logging, owner-scoped stores,
 src/test/               integration setup, test DB helpers, plain-Postgres shim
 scripts/                test DB preparation; CI auth-revocation check
 supabase/               CLI config.toml and migrations
-worker/                 Python worker (skeleton)
-docs/decisions/         ADRs 001–004
-docs/runbooks/          Supabase environment setup
+worker/                 Python worker (claim loop, executor, store, contracts) + Dockerfile
+contracts/              JSON Schemas + shared fixtures
+render.yaml             Render Blueprint (Frankfurt)
+docs/decisions/         ADRs 001–006
+docs/runbooks/          Supabase setup, Render deploy, run operations
 docs/security/          data lifecycle: storage, export, deletion, retention
 ```
 
 ## Gates still open before real users
 
-1. Durable runs in the worker: 202 + queue, checkpoints, cancellation, idempotency, budgets **[M3]**
-2. Provider adapter with token/time/search/spend caps **[M4]**
-3. Claim/source provenance before web research **[M5]**
-4. In-app export and delete; retention decisions ([data lifecycle](docs/security/data-lifecycle.md)) **[M6]**
-5. Custom SMTP, sign-up policy and other hosted Auth settings ([runbook](docs/runbooks/supabase-setup.md)) **[before pilot]**
-6. Playwright E2E, security review, backup/restore test, monitoring **[M8]**
+1. Provider adapter with token/time/search/spend caps **[M4]**
+2. Claim/source provenance before web research **[M5]**
+3. In-app export and delete; retention decisions ([data lifecycle](docs/security/data-lifecycle.md)) **[M6]**
+4. Custom SMTP, sign-up policy and other hosted Auth settings ([runbook](docs/runbooks/supabase-setup.md)) **[before pilot]**
+5. Playwright E2E, security review, backup/restore test, monitoring and alerting on worker heartbeats **[M8]**
 
 ## Claude engineering prompt kit
 

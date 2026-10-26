@@ -30,6 +30,10 @@ describe("parseServerConfig", () => {
       supabasePublishableKey: BASE.SUPABASE_PUBLISHABLE_KEY,
       appOrigin: "http://localhost:3000",
       limits: { projectsPerHour: 30, runsPerHour: 20 },
+      runBudget: {
+        initial: { maxSteps: 18, maxActiveSeconds: 600, maxResearchCalls: 8, maxCostUsd: 0.5 },
+        resumeIncrement: { maxSteps: 9, maxActiveSeconds: 300, maxResearchCalls: 4, maxCostUsd: 0.25 }
+      },
       secureCookies: false
     });
   });
@@ -76,6 +80,9 @@ describe("parseServerConfig", () => {
     expect(issues.join(" ")).toMatch(/postgres:\/\/ or postgresql:\/\//);
     expect(issues.join(" ")).toMatch(/RUN_CREATE_LIMIT_PER_HOUR must be between 1 and 10000/);
     expect(issues.join(" ")).not.toContain("SuperSecret");
+    expect(issuesOf({ ...BASE, RUN_BUDGET_MAX_STEPS: "0", RUN_BUDGET_MAX_COST_USD: "-1" })).toEqual([
+      "RUN_BUDGET_MAX_STEPS must be between 1 and 1000", "RUN_BUDGET_MAX_COST_USD must be between 0 and 1000"
+    ]);
     expect(() => parseServerConfig({ ...BASE, NODE_ENV: "staging" })).toThrow(ConfigError);
   });
 });

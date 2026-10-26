@@ -3,7 +3,7 @@ import type { CurrentUser } from "@/lib/domain/types";
 import { AuthUnavailableError, getCurrentUser } from "./auth";
 import { ConfigError, getServerConfig } from "./config";
 import { log } from "./log";
-import { ProjectArchivedError, RateLimitError } from "./repository";
+import { IdempotencyConflictError, ProjectArchivedError, RateLimitError, RunStateError } from "./repository";
 
 /** Stable, client-facing error codes (blueprint §6.2). Messages are fixed strings, never raw exception text. */
 export type ApiErrorCode =
@@ -12,6 +12,8 @@ export type ApiErrorCode =
   | "VALIDATION_ERROR"
   | "NOT_FOUND"
   | "PROJECT_ARCHIVED"
+  | "RUN_STATE_CONFLICT"
+  | "IDEMPOTENCY_CONFLICT"
   | "PAYLOAD_TOO_LARGE"
   | "UNSUPPORTED_MEDIA_TYPE"
   | "RATE_LIMITED"
@@ -27,8 +29,8 @@ export function apiError(code: ApiErrorCode, message: string, status: number, he
   return NextResponse.json({ error: { code, message } }, { status, headers: { ...NO_STORE, ...headers } });
 }
 
-export function ok(data: unknown, status = 200): NextResponse {
-  return NextResponse.json({ data }, { status, headers: NO_STORE });
+export function ok(data: unknown, status = 200, headers: Record<string, string> = {}): NextResponse {
+  return NextResponse.json({ data }, { status, headers: { ...NO_STORE, ...headers } });
 }
 
 /** Another owner's resource and a nonexistent one get the same answer. */
@@ -60,6 +62,12 @@ export function handleUnexpected(error: unknown, route: string): NextResponse {
   if (error instanceof RateLimitError) {
     log("warn", "rate_limited", { route, resource: error.resource });
     return apiError("RATE_LIMITED", `Too many new ${error.resource} in the last hour. Try again later.`, 429, { "retry-after": String(error.retryAfterSeconds) });
+  }
+  if (error instanceof RunStateError) {
+    return apiError("RUN_STATE_CONFLICT", "That action isn't available for this run in its current state.", 409);
+  }
+  if (error instanceof IdempotencyConflictError) {
+    return apiError("IDEMPOTENCY_CONFLICT", "This Idempotency-Key was already used for a different request.", 409);
   }
   if (error instanceof ProjectArchivedError) {
     return apiError("PROJECT_ARCHIVED", "This project is archived. Unarchive it to start a run.", 409);

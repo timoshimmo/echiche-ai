@@ -1,0 +1,9 @@
+{
+  "summary": "A first-pass thinking structure for: “Should we enter market X?”",
+  "stages": [
+    { "stage": "frame", "title": "Frame the decision", "content": "Decision/question: Should we enter market X?" },
+    { "stage": "challenge", "title": "Challenge assumptions", "content": "Test the most important assumptions." },
+    { "stage": "synthesize", "title": "Synthesize a next step", "content": "Choose a small reversible next step." }
+  ],
+  "caveat": "Starter mode: deterministic scaffold, not model-generated analysis."
+}

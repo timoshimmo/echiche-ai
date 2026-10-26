@@ -13,10 +13,19 @@ export type Project = {
   updatedAt: string;
 };
 
-export const RUN_STATUSES = ["queued", "running", "succeeded", "failed"] as const;
+/** Execution stages, in order (blueprint §3.1). The worker owns these transitions. */
+export const RUN_STAGES = ["planning", "researching", "critiquing", "verifying", "synthesizing"] as const;
+export type RunStage = (typeof RUN_STAGES)[number];
+
+export const RUN_STATUSES = [
+  "queued", ...RUN_STAGES, "awaiting_user_review", "completed", "failed", "cancelled", "paused_for_budget"
+] as const;
 export type RunStatus = (typeof RUN_STATUSES)[number];
 
-export const RUN_EVENT_TYPES = ["status", "stage", "result", "error"] as const;
+/** No further automatic progress: the UI stops polling. */
+export const SETTLED_STATUSES: readonly RunStatus[] = ["awaiting_user_review", "completed", "failed", "cancelled", "paused_for_budget"];
+
+export const RUN_EVENT_TYPES = ["status", "stage", "result", "error", "budget"] as const;
 export type RunEventType = (typeof RUN_EVENT_TYPES)[number];
 
 export type RunEvent = {
@@ -30,19 +39,47 @@ export type RunEvent = {
   createdAt: string;
 };
 
+export type RunBudget = { maxSteps: number; maxActiveSeconds: number; maxResearchCalls: number; maxCostUsd: number };
+export type RunUsage = { steps: number; activeSeconds: number; researchCalls: number; costUsd: number };
+
 export type ThoughtRun = {
   id: string;
   projectId: string;
   prompt: string;
   status: RunStatus;
   result: ReasoningResult | null;
-  /** Stable machine-readable reason when status === "failed". */
+  /** Stable machine-readable reason (failed, paused, or the last transient retry). See RUN_ERROR_MESSAGES. */
   errorCode: string | null;
+  cancelRequested: boolean;
+  attempt: number;
+  budget: RunBudget;
+  usage: RunUsage;
+  /** Stages with a committed checkpoint, in order. */
+  completedStages: RunStage[];
   createdAt: string;
+  startedAt: string | null;
+  updatedAt: string;
   completedAt: string | null;
 };
 
 export type ThoughtRunWithEvents = ThoughtRun & { events: RunEvent[] };
+
+/** Safe, user-facing explanations for stable run error codes. */
+export const RUN_ERROR_MESSAGES: Record<string, string> = {
+  BUDGET_STEPS: "Paused: the step budget for this run was used up.",
+  BUDGET_TIME: "Paused: the processing-time budget for this run was used up.",
+  BUDGET_RESEARCH: "Paused: the research budget for this run was used up.",
+  BUDGET_COST: "Paused: the spending budget for this run was used up.",
+  PROVIDER_TIMEOUT: "The reasoning service took too long to respond.",
+  PROVIDER_UNAVAILABLE: "The reasoning service was temporarily unavailable.",
+  INVALID_PROVIDER_OUTPUT: "The reasoning service returned output that failed validation.",
+  RESULT_INVALID: "The final result failed validation and was not saved.",
+  CHECKPOINT_INVALID: "Saved progress for this run could not be read.",
+  RUN_RETRIES_EXHAUSTED: "The run failed after several attempts.",
+  RUN_ABANDONED: "This run was interrupted before background processing existed.",
+  WORKER_SHUTDOWN: "The run was paused for maintenance and will continue automatically.",
+  INTERNAL_ERROR: "Something went wrong while processing this run."
+};
 
 export type CreateProjectInput = {
   title: string;

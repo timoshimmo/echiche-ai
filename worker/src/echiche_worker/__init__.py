@@ -8,4 +8,4 @@ versioned JSON contracts in ``contracts/``.
 M1 status: skeleton only (configuration validation and structured logging).
 """
 
-__version__ = "0.1.0"
+__version__ = "0.3.0"

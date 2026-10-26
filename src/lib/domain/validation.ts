@@ -18,5 +18,8 @@ export const startRunSchema = z.object({ prompt: z.string().trim().min(10).max(8
 /** Route IDs are UUIDs. Anything else is treated as "not found" without touching storage. */
 export const resourceIdSchema = z.uuid();
 
+/** Optional Idempotency-Key header for run creation (same rule as the DB check). */
+export const idempotencyKeySchema = z.string().regex(/^[A-Za-z0-9._:-]{8,128}$/);
+
 /** Magic-link sign-in form. */
 export const signInSchema = z.object({ email: z.email().max(254) });

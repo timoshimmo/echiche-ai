@@ -1,0 +1,7 @@
+[
+  { "stages": [{ "stage": "frame", "title": "t", "content": "c" }], "caveat": "missing summary" },
+  { "summary": "s", "stages": [], "caveat": "no stages" },
+  { "summary": "s", "stages": [{ "stage": "decide", "title": "t", "content": "c" }], "caveat": "unknown stage" },
+  { "summary": "", "stages": [{ "stage": "frame", "title": "t", "content": "c" }], "caveat": "empty summary" },
+  { "summary": "s", "stages": [{ "stage": "frame", "title": "t", "content": "c" }], "caveat": "c", "extra": true }
+]

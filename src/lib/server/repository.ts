@@ -1,14 +1,16 @@
 import type {
-  CreateProjectInput, Project, ReasoningResult, RunEvent, StartRunInput, ThoughtRun, UpdateProjectInput
+  CreateProjectInput, Project, RunBudget, RunEvent, StartRunInput, ThoughtRun, UpdateProjectInput
 } from "@/lib/domain/types";
-
-export type AppendEventInput = Omit<RunEvent, "id" | "createdAt" | "sequence">;
 
 /**
  * Storage scoped to ONE owner. Every method only ever sees that owner's rows:
- * another owner's ID behaves exactly like a nonexistent ID (null / [] / RunStateError).
+ * another owner's ID behaves exactly like a nonexistent ID (null / []).
  * Obtain one with Store.forOwner(userId) using an ID from a verified session; never
  * from request input. Callers pass already-validated input; IDs are UUIDs.
+ *
+ * Since M3 the web app never executes runs: it creates them (queued) and applies the
+ * three user decisions (cancel, accept, resume). The Python worker does the rest, and
+ * the database trigger rejects any other transition (migration 0004).
  */
 export interface OwnerScopedRepository {
   readonly ownerId: string;
@@ -18,21 +20,33 @@ export interface OwnerScopedRepository {
   getProject(id: string): Promise<Project | null>;
   updateProject(id: string, patch: UpdateProjectInput): Promise<Project | null>;
   /**
-   * null when the project does not exist for this owner. Throws ProjectArchivedError
-   * for archived projects and RateLimitError when the hourly run limit is reached.
+   * Queues a run. null when the project does not exist for this owner.
+   * With an idempotency key, a repeat of the same request returns the original run
+   * (`created: false`); reusing the key for a different request throws IdempotencyConflictError.
+   * Throws ProjectArchivedError / RateLimitError.
    */
-  createRun(projectId: string, input: StartRunInput, maxPerHour: number): Promise<ThoughtRun | null>;
+  createRun(projectId: string, input: StartRunInput, options: CreateRunOptions): Promise<{ run: ThoughtRun; created: boolean } | null>;
   getRun(id: string): Promise<ThoughtRun | null>;
   listRuns(projectId: string): Promise<ThoughtRun[]>;
-  /** Assigns the next per-run sequence number. Assumes one writer per run (true until M3). */
-  appendEvent(event: AppendEventInput): Promise<RunEvent>;
   /** Events in sequence order. */
   listEvents(runId: string): Promise<RunEvent[]>;
-  /** running → succeeded. Throws RunStateError if the run is missing, not this owner's, or not running. */
-  completeRun(runId: string, result: ReasoningResult): Promise<ThoughtRun>;
-  /** running → failed with a stable error code. Same guards as completeRun. */
-  failRun(runId: string, errorCode: string): Promise<ThoughtRun>;
+  /**
+   * Idempotent. queued/paused → cancelled immediately; active → cancel requested (the worker
+   * stops between stages); already cancelled → unchanged. Throws RunStateError for runs that
+   * are awaiting review, completed or failed.
+   */
+  cancelRun(runId: string): Promise<ThoughtRun | null>;
+  /** awaiting_user_review → completed. Idempotent for completed. RunStateError otherwise. */
+  acceptRun(runId: string): Promise<ThoughtRun | null>;
+  /**
+   * paused_for_budget → queued, raising each cap by `increment` (explicit user approval).
+   * Idempotent: a run that is no longer paused is returned unchanged if queued or active.
+   * RunStateError for finished runs.
+   */
+  resumeRun(runId: string, increment: RunBudget): Promise<ThoughtRun | null>;
 }
+
+export type CreateRunOptions = { maxPerHour: number; budget: RunBudget; idempotencyKey?: string };
 
 export interface Store {
   /** Throws if ownerId is not a UUID. */
@@ -48,9 +62,17 @@ export function assertOwnerId(ownerId: string): void {
 
 export class RunStateError extends Error {
   readonly code = "RUN_STATE_CONFLICT";
-  constructor(readonly runId: string, readonly expected: string) {
-    super(`Run is missing or not in state "${expected}"`);
+  constructor(readonly runId: string, readonly status: string) {
+    super(`Run is in state "${status}"`);
     this.name = "RunStateError";
+  }
+}
+
+export class IdempotencyConflictError extends Error {
+  readonly code = "IDEMPOTENCY_CONFLICT";
+  constructor() {
+    super("Idempotency key was already used for a different request");
+    this.name = "IdempotencyConflictError";
   }
 }
 
@@ -78,3 +100,6 @@ export class DataIntegrityError extends Error {
     this.name = "DataIntegrityError";
   }
 }
+
+/** Single source for the web side of the user-decision rules (the DB trigger is authoritative). */
+export const ACTIVE_STATUSES = ["planning", "researching", "critiquing", "verifying", "synthesizing"] as const;

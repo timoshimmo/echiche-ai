@@ -15,7 +15,7 @@ Level = Literal["info", "warn", "error"]
 FieldValue = str | int | float | bool | None | list[str]
 
 
-def log(level: Level, event: str, stream: TextIO | None = None, **fields: FieldValue) -> None:
+def log(level: Level, event: str, stream: TextIO | None = None, /, **fields: FieldValue) -> None:
     record: dict[str, FieldValue] = {
         "ts": datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
         "level": level,

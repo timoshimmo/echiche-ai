@@ -1,0 +1,45 @@
+{
+  "$id": "stage-output.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "content": {
+      "maxLength": 20000,
+      "minLength": 1,
+      "title": "Content",
+      "type": "string"
+    },
+    "limitations": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 20,
+      "title": "Limitations",
+      "type": "array"
+    },
+    "stage": {
+      "enum": [
+        "planning",
+        "researching",
+        "critiquing",
+        "verifying",
+        "synthesizing"
+      ],
+      "title": "Stage",
+      "type": "string"
+    },
+    "title": {
+      "maxLength": 200,
+      "minLength": 1,
+      "title": "Title",
+      "type": "string"
+    }
+  },
+  "required": [
+    "stage",
+    "title",
+    "content"
+  ],
+  "title": "StageOutputV1",
+  "type": "object"
+}
