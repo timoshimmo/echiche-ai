@@ -1,6 +1,6 @@
 # Echiche (starter, milestone M4)
 
-**Version:** 0.4.0 · **Stage:** M4 "Model provider and prompt registry" implemented (ADR-007 awaiting approval); next is M5 (research with provenance).
+**Version:** 0.4.0 · **Stage:** M4 "Model provider and prompt registry" implemented (ADR-007 accepted); next is M5 (research with provenance).
 
 > **Not production-ready yet.** Already in place:
 > - sign-in, per-user isolation (app checks plus row-level security), and CSRF/size/rate limits (M2);
@@ -169,7 +169,7 @@ docs/security/          data lifecycle: storage, export, deletion, retention
 
 ## Gates still open before real users
 
-1. ~~Provider adapter with token/time/spend caps~~ **[M4, done; ADR-007 approval pending]**; output-quality evaluation **[M7]**
+1. ~~Provider adapter with token/time/spend caps~~ **[M4, done; ADR-007 accepted]**; output-quality evaluation **[M7]**
 2. Claim/source provenance before web research **[M5]**
 3. In-app export and delete; retention decisions ([data lifecycle](docs/security/data-lifecycle.md)) **[M6]**
 4. Custom SMTP, sign-up policy and other hosted Auth settings ([runbook](docs/runbooks/supabase-setup.md)) **[before pilot]**

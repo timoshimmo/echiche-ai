@@ -1,6 +1,6 @@
 # ADR-007: Model provider adapter and prompt registry
 
-- Status: **Proposed** (2026-10-26). Implemented in M4 behind `REASONING_PROVIDER`, which defaults to the deterministic demo mode, so **no paid call happens until the decision owner sets an API key and switches the provider**. D9–D12 below need approval.
+- Status: **Accepted** (2026-10-26). The decision owner approved D9–D12 on 2026-10-26. Implemented in M4 behind `REASONING_PROVIDER`, which still defaults to the deterministic demo mode: **no paid call happens until the decision owner sets an API key and switches the provider**.
 - Date: 2026-10-26
 - Decision owner: Tokmang
 - Related: blueprint §2.6 (decision brief), §3.1, §8.3 (provider data use), §8.4 (budgets); ADR-001 (D1 contracts, D3 worker deps); ADR-003 (result storage); ADR-006 (execution, failure policy)
@@ -70,13 +70,13 @@ The EU data-residency endpoint is billed at +10%.
 ### Secrets
 `OPENAI_API_KEY` exists only in the worker's environment (Render dashboard, `sync: false`). The web app refuses to start if it is set there. The worker's config `repr` redacts it, and tests assert it never appears in configuration error messages.
 
-## Decisions requiring approval
+## Approved decisions (2026-10-26)
 - **D9 Paid calls:** Echiche sends project and question text to OpenAI when `REASONING_PROVIDER=openai`. Retention verified 2026-10-26 from OpenAI's API data-controls documentation:
   - API data is not used for training by default.
   - Abuse-monitoring logs are kept for up to 30 days.
   - `store=false` means no Responses application state is kept.
 
-  The privacy notice must say this before real users ([data lifecycle](../security/data-lifecycle.md)).
+  Approval covers sending this data. The privacy notice must still say this before real users ([data lifecycle](../security/data-lifecycle.md)).
 - **D10 Default model `gpt-6.1-sol`**, with `OPENAI_MAX_OUTPUT_TOKENS=4000` and the default cap of $0.50 per run. Not verified: this model's context window and supported reasoning-effort values. The effort setting is optional and unset by default; the pinned SDK accepts `none … max`, but not every model supports every value.
 - **D11 Data residency:** default is `global`. `eu` (eu.api.openai.com) requires OpenAI's approval for EU data residency first, and costs +10%.
 - **D12** The telemetry table design above, and the decision that the brief's `proposed_memory_updates` are only displayed in M4. Saving memory is a later milestone and needs user review.

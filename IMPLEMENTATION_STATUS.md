@@ -63,7 +63,7 @@ From a **clean clone** against a **fresh database**:
 
 ## Implemented
 
-**M4** (ADR-007, status Proposed: D9–D12 need approval before enabling paid calls)
+**M4** (ADR-007 accepted 2026-10-26, D9–D12 approved; paid calls stay off until a key is set)
 - **Prompt registry** (`prompts/runtime/`, TOML frontmatter, fail-closed loading). The 3 active prompts were rewritten to v2.0.0; the other 4 are drafts.
 - **Contracts:** `decision-frame.v1`, `critique.v1`, `decision-brief.v1` (every blueprint §2.6 section), `stage-output.v2`; shared fixtures; Zod mirror with string bounds.
 - **`ModelClient` port, OpenAI adapter, model pipeline:** one repair attempt, citation guard, worst-case spend preflight, and call records. The verified price table is dated, with the source URL.
@@ -107,7 +107,8 @@ From a **clean clone** against a **fresh database**:
 
 | Gap | Milestone |
 |---|---|
-| Model output not evaluated (no eval set); ADR-007 D9–D12 approval; privacy notice must mention OpenAI | M7 / before enabling |
+| Model output not evaluated (no eval set) | M7 |
+| Privacy notice must mention OpenAI (data sent, retention) | before real users |
 | `proposed_memory_updates` are displayed only, never saved | M6 |
 | A clarifying question from framing is shown as a limitation in the brief; there is no answer-and-continue round-trip yet | later |
 | No research provenance | M5 |

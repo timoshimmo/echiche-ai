@@ -43,7 +43,7 @@ Write migrations to be backward compatible with the currently running code (add 
 
 ## Enabling live reasoning (OpenAI, ADR-007)
 Paid calls start only after these steps; until then the worker runs the deterministic demo mode.
-1. **Approve** ADR-007 D9–D11, and update the privacy notice: project and question text are sent to OpenAI (not used for training by default; abuse-monitoring logs up to 30 days; `store=false`).
+1. ADR-007 D9–D12 were approved on 2026-10-26. Before real users, update the privacy notice: project and question text are sent to OpenAI (not used for training by default; abuse-monitoring logs up to 30 days; `store=false`).
 2. In OpenAI, create a **project-scoped key** with a monthly budget limit. For EU data residency, get OpenAI's approval first, then set `OPENAI_DATA_RESIDENCY=eu` (+10% price).
 3. On **`echiche-worker`** only: set `OPENAI_API_KEY` (secret), then set `REASONING_PROVIDER=openai`. Optionally change `OPENAI_MODEL` to another priced model (`gpt-6-luna` is cheapest). An unpriced model makes the worker exit at start-up with `config_invalid`.
 4. Check the worker's start-up log: `worker_starting` with `"provider":"openai:<model>"`. A bad key shows up as runs failing with `PROVIDER_AUTH`.
