@@ -3,7 +3,7 @@
 The manual, per-environment steps that code cannot do. Do them in **staging** before production. Dashboard menu names can shift between Supabase releases; the setting names are what matter.
 
 ## 1. Create the project
-- Pick the region closest to your users, and record it in ADR-002/ADR-004 notes.
+- Region: **Frankfurt (`eu-central-1`)**, the same region as the Render services (ADR-005). Supabase regions can't be changed later.
 - Check Supabase's current data-processing terms for that region before storing real founder data.
 - Save the database password in a password manager. **Never paste it into chat, issues or commits.**
 
