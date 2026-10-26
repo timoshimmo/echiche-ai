@@ -5,6 +5,7 @@ import {
   RUN_ERROR_MESSAGES, RUN_STAGES, SETTLED_STATUSES,
   type CurrentUser, type Project, type RunStage, type ThoughtRunWithEvents
 } from "@/lib/domain/types";
+import { DecisionBriefView, generationDetail, generationLabel } from "./decision-brief";
 
 const STATUS_LABEL: Record<ThoughtRunWithEvents["status"], string> = {
   queued: "Queued", planning: "Planning", researching: "Researching", critiquing: "Critiquing",
@@ -153,7 +154,8 @@ export default function HomePage() {
       </div>
       {run && <section className="results" aria-live="polite">
         <div className="result-head">
-          <div><p className="eyebrow">{result ? "DECISION BRIEF" : "THOUGHT RUN"}</p><h2>{result ? result.summary : run.prompt}</h2></div>
+          <div><p className="eyebrow">{result ? "DECISION BRIEF" : "THOUGHT RUN"}</p><h2>{result?.schemaVersion === "reasoning-scaffold.v1" ? result.data.summary : result ? result.data.decision_question : run.prompt}</h2>
+            {(result || run.generation.mode === "model") && <p className="generation" title={generationDetail(run.generation) ?? undefined}>{generationLabel(run.generation)}</p>}</div>
           <span className="status-pill">{STATUS_LABEL[run.status]}{run.cancelRequested && !settled ? " · cancelling" : ""}</span>
         </div>
         <ol className="stage-progress">
@@ -171,11 +173,13 @@ export default function HomePage() {
           {run.status === "awaiting_user_review" &&
             <button type="button" disabled={busy} onClick={() => act("accept")}>Accept brief</button>}
         </div>
-        {result && <>
-          <div className="stage-grid">{result.stages.map((stage, index) => <article className="stage-card" key={stage.stage}><span className="stage-number">0{index + 1}</span><h3>{stage.title}</h3><p>{stage.content}</p></article>)}</div>
-          <div className="caveat"><strong>Important limitation</strong><p>{result.caveat}</p></div>
+        {result?.schemaVersion === "reasoning-scaffold.v1" && <>
+          <div className="stage-grid">{result.data.stages.map((stage, index) => <article className="stage-card" key={stage.stage}><span className="stage-number">0{index + 1}</span><h3>{stage.title}</h3><p>{stage.content}</p></article>)}</div>
+          <div className="caveat"><strong>Important limitation</strong><p>{result.data.caveat}</p></div>
         </>}
-        <p className="usage">Used {run.usage.steps}/{run.budget.maxSteps} steps · {Math.round(run.usage.activeSeconds)}s of {run.budget.maxActiveSeconds}s</p>
+        {result?.schemaVersion === "decision-brief.v1" && <DecisionBriefView brief={result.data} />}
+        <p className="usage">Used {run.usage.steps}/{run.budget.maxSteps} steps · {Math.round(run.usage.activeSeconds)}s of {run.budget.maxActiveSeconds}s · ${run.usage.costUsd.toFixed(4)} of ${run.budget.maxCostUsd.toFixed(2)}</p>
+        {generationDetail(run.generation) && <p className="usage">{generationDetail(run.generation)}</p>}
         {run.events?.length ? <details><summary>Run event log ({run.events.length})</summary><ul>{run.events.map(event => <li key={event.id}><b>{event.stage}</b> — {event.message}</li>)}</ul></details> : null}
       </section>}
       <footer><span>ECHICHE / STARTER REPOSITORY</span><span>Built for continuity, not an unrestricted agent swarm.</span></footer>

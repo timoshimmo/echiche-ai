@@ -1,0 +1,39 @@
+{
+  "decision_statement": "Whether Acme should launch a paid pilot of its scheduling tool with three clinics this quarter.",
+  "goal": "Learn whether clinics will pay for automated scheduling before investing in a full launch.",
+  "time_horizon": "This quarter",
+  "options": [
+    "Paid pilot with three clinics",
+    "Free pilot",
+    "Delay until the integration is finished"
+  ],
+  "criteria": [
+    "Learning speed",
+    "Cash cost",
+    "Reputational risk"
+  ],
+  "constraints": [
+    "Two engineers available",
+    "No integration with clinic records yet"
+  ],
+  "assumptions": [
+    {
+      "statement": "Clinics feel the scheduling pain strongly enough to pay.",
+      "label": "hypothesis",
+      "confidence": "medium"
+    },
+    {
+      "statement": "Three clinics have expressed interest.",
+      "label": "fact",
+      "confidence": "high"
+    }
+  ],
+  "unknowns": [
+    "Willingness to pay at the proposed price"
+  ],
+  "research_questions": [
+    "What do comparable tools charge small clinics?"
+  ],
+  "clarification_needed": false,
+  "clarifying_question": null
+}

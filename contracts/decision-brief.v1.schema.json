@@ -1,0 +1,352 @@
+{
+  "$defs": {
+    "AlternativeV1": {
+      "additionalProperties": false,
+      "properties": {
+        "option": {
+          "title": "Option",
+          "type": "string"
+        },
+        "why_not_now": {
+          "title": "Why Not Now",
+          "type": "string"
+        }
+      },
+      "required": [
+        "option",
+        "why_not_now"
+      ],
+      "title": "AlternativeV1",
+      "type": "object"
+    },
+    "AssumptionV1": {
+      "additionalProperties": false,
+      "properties": {
+        "confidence": {
+          "enum": [
+            "low",
+            "medium",
+            "high"
+          ],
+          "title": "Confidence",
+          "type": "string"
+        },
+        "label": {
+          "enum": [
+            "fact",
+            "inference",
+            "hypothesis",
+            "speculation",
+            "unknown"
+          ],
+          "title": "Label",
+          "type": "string"
+        },
+        "statement": {
+          "title": "Statement",
+          "type": "string"
+        }
+      },
+      "required": [
+        "statement",
+        "label",
+        "confidence"
+      ],
+      "title": "AssumptionV1",
+      "type": "object"
+    },
+    "CitationV1": {
+      "additionalProperties": false,
+      "properties": {
+        "source_id": {
+          "title": "Source Id",
+          "type": "string"
+        },
+        "supports": {
+          "title": "Supports",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source_id",
+        "supports"
+      ],
+      "title": "CitationV1",
+      "type": "object"
+    },
+    "ConfidenceV1": {
+      "additionalProperties": false,
+      "properties": {
+        "explanation": {
+          "title": "Explanation",
+          "type": "string"
+        },
+        "level": {
+          "enum": [
+            "low",
+            "medium",
+            "high"
+          ],
+          "title": "Level",
+          "type": "string"
+        }
+      },
+      "required": [
+        "level",
+        "explanation"
+      ],
+      "title": "ConfidenceV1",
+      "type": "object"
+    },
+    "CriterionTradeoffV1": {
+      "additionalProperties": false,
+      "properties": {
+        "criterion": {
+          "title": "Criterion",
+          "type": "string"
+        },
+        "tradeoff": {
+          "title": "Tradeoff",
+          "type": "string"
+        }
+      },
+      "required": [
+        "criterion",
+        "tradeoff"
+      ],
+      "title": "CriterionTradeoffV1",
+      "type": "object"
+    },
+    "EvidencePointV1": {
+      "additionalProperties": false,
+      "properties": {
+        "label": {
+          "enum": [
+            "fact",
+            "inference",
+            "hypothesis",
+            "speculation",
+            "unknown"
+          ],
+          "title": "Label",
+          "type": "string"
+        },
+        "point": {
+          "title": "Point",
+          "type": "string"
+        },
+        "source_ids": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 5,
+          "title": "Source Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "point",
+        "label",
+        "source_ids"
+      ],
+      "title": "EvidencePointV1",
+      "type": "object"
+    },
+    "MemoryUpdateV1": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "goal",
+            "constraint",
+            "assumption",
+            "decision",
+            "open_question"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "statement": {
+          "title": "Statement",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "statement"
+      ],
+      "title": "MemoryUpdateV1",
+      "type": "object"
+    },
+    "NextActionV1": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "title": "Action",
+          "type": "string"
+        },
+        "reversible": {
+          "title": "Reversible",
+          "type": "boolean"
+        },
+        "success_signal": {
+          "title": "Success Signal",
+          "type": "string"
+        }
+      },
+      "required": [
+        "action",
+        "success_signal",
+        "reversible"
+      ],
+      "title": "NextActionV1",
+      "type": "object"
+    },
+    "RecommendationV1": {
+      "additionalProperties": false,
+      "properties": {
+        "rationale": {
+          "title": "Rationale",
+          "type": "string"
+        },
+        "summary": {
+          "title": "Summary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "summary",
+        "rationale"
+      ],
+      "title": "RecommendationV1",
+      "type": "object"
+    }
+  },
+  "$id": "decision-brief.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Every section the blueprint (\u00a72.6) requires of a decision brief.",
+  "properties": {
+    "alternatives": {
+      "items": {
+        "$ref": "#/$defs/AlternativeV1"
+      },
+      "maxItems": 6,
+      "minItems": 1,
+      "title": "Alternatives",
+      "type": "array"
+    },
+    "citations": {
+      "items": {
+        "$ref": "#/$defs/CitationV1"
+      },
+      "maxItems": 20,
+      "title": "Citations",
+      "type": "array"
+    },
+    "confidence": {
+      "$ref": "#/$defs/ConfidenceV1"
+    },
+    "counterevidence": {
+      "items": {
+        "$ref": "#/$defs/EvidencePointV1"
+      },
+      "maxItems": 8,
+      "title": "Counterevidence",
+      "type": "array"
+    },
+    "criteria_and_tradeoffs": {
+      "items": {
+        "$ref": "#/$defs/CriterionTradeoffV1"
+      },
+      "maxItems": 8,
+      "minItems": 1,
+      "title": "Criteria And Tradeoffs",
+      "type": "array"
+    },
+    "decision_question": {
+      "title": "Decision Question",
+      "type": "string"
+    },
+    "key_assumptions": {
+      "items": {
+        "$ref": "#/$defs/AssumptionV1"
+      },
+      "maxItems": 10,
+      "title": "Key Assumptions",
+      "type": "array"
+    },
+    "limitations": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 10,
+      "title": "Limitations",
+      "type": "array"
+    },
+    "next_actions": {
+      "items": {
+        "$ref": "#/$defs/NextActionV1"
+      },
+      "maxItems": 6,
+      "minItems": 1,
+      "title": "Next Actions",
+      "type": "array"
+    },
+    "proposed_memory_updates": {
+      "items": {
+        "$ref": "#/$defs/MemoryUpdateV1"
+      },
+      "maxItems": 10,
+      "title": "Proposed Memory Updates",
+      "type": "array"
+    },
+    "recommendation": {
+      "$ref": "#/$defs/RecommendationV1"
+    },
+    "scope": {
+      "title": "Scope",
+      "type": "string"
+    },
+    "strongest_objection": {
+      "title": "Strongest Objection",
+      "type": "string"
+    },
+    "supporting_evidence": {
+      "items": {
+        "$ref": "#/$defs/EvidencePointV1"
+      },
+      "maxItems": 8,
+      "title": "Supporting Evidence",
+      "type": "array"
+    },
+    "what_would_change": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 8,
+      "minItems": 1,
+      "title": "What Would Change",
+      "type": "array"
+    }
+  },
+  "required": [
+    "decision_question",
+    "scope",
+    "recommendation",
+    "criteria_and_tradeoffs",
+    "key_assumptions",
+    "supporting_evidence",
+    "counterevidence",
+    "strongest_objection",
+    "alternatives",
+    "confidence",
+    "what_would_change",
+    "next_actions",
+    "citations",
+    "proposed_memory_updates",
+    "limitations"
+  ],
+  "title": "DecisionBriefV1",
+  "type": "object"
+}

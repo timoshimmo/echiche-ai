@@ -34,14 +34,26 @@ services:
     region: frankfurt
     plan: 0.5c-512mb
     dockerfilePath: ./worker/Dockerfile
-    dockerContext: ./worker
+    dockerContext: .            # repo root: the image also contains prompts/runtime
     # On SIGTERM the worker stops claiming and releases or finishes its current stage.
     # Keep this above WORKER_STAGE_TIMEOUT_SECONDS.
     maxShutdownDelaySeconds: 120
     envVars:
       - key: DATABASE_URL          # as echiche_worker
         sync: false
-      - key: WORKER_STAGE_TIMEOUT_SECONDS
-        value: "90"
+      - key: WORKER_STAGE_TIMEOUT_SECONDS   # a model stage may make 2 calls (one repair)
+        value: "110"
       - key: WORKER_LEASE_SECONDS
         value: "60"
+      # Reasoning provider (ADR-007). "deterministic" = demo mode, no model calls, no cost.
+      # Switch to "openai" only after OPENAI_API_KEY is set (Render dashboard, never in git).
+      - key: REASONING_PROVIDER
+        value: deterministic
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_MODEL           # must have a verified price in worker/src/echiche_worker/llm.py
+        value: gpt-6.1-sol
+      - key: OPENAI_DATA_RESIDENCY  # "eu" requires OpenAI's approval for EU data residency first
+        value: global
+      - key: OPENAI_MAX_OUTPUT_TOKENS
+        value: "4000"

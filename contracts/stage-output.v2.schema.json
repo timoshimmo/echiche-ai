@@ -1,0 +1,71 @@
+{
+  "$id": "stage-output.v2.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "v1 plus the validated structured output of a model-backed stage (M4).\n\n`data` holds a payload of contract `data_schema` (e.g. decision-frame.v1); it is\nre-validated against that model whenever the checkpoint is loaded.",
+  "properties": {
+    "content": {
+      "maxLength": 20000,
+      "minLength": 1,
+      "title": "Content",
+      "type": "string"
+    },
+    "data": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Data"
+    },
+    "data_schema": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Data Schema"
+    },
+    "limitations": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 20,
+      "title": "Limitations",
+      "type": "array"
+    },
+    "stage": {
+      "enum": [
+        "planning",
+        "researching",
+        "critiquing",
+        "verifying",
+        "synthesizing"
+      ],
+      "title": "Stage",
+      "type": "string"
+    },
+    "title": {
+      "maxLength": 200,
+      "minLength": 1,
+      "title": "Title",
+      "type": "string"
+    }
+  },
+  "required": [
+    "stage",
+    "title",
+    "content"
+  ],
+  "title": "StageOutputV2",
+  "type": "object"
+}

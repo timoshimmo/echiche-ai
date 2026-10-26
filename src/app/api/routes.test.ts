@@ -296,6 +296,9 @@ describe("asynchronous runs (M3)", () => {
     const run = (await response.json()).data;
     expect(response.headers.get("location")).toBe(`/api/runs/${run.id}`);
     expect(run).toMatchObject({ status: "queued", result: null, completedStages: [], budget: { maxSteps: 18, maxActiveSeconds: 600 } });
+    expect(run.generation).toEqual({
+      mode: "demo", providers: [], models: [], prompts: [], calls: 0, repairs: 0, inputTokens: 0, outputTokens: 0, costUsd: 0
+    });
     expect(store.events.get(run.id)).toEqual([]);
   });
 

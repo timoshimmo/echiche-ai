@@ -37,5 +37,24 @@ Prefer the user-facing actions (cancel / resume) where possible; they are audite
 
 ## Error codes
 See `RUN_ERROR_MESSAGES` in `src/lib/domain/types.ts` (user-facing text) and the failure policy in ADR-006.
-- **Repeated `PROVIDER_TIMEOUT` / `PROVIDER_UNAVAILABLE`:** a provider outage (from M4).
+- **Repeated `PROVIDER_TIMEOUT` / `PROVIDER_UNAVAILABLE` / `PROVIDER_RATE_LIMITED`:** a provider outage or a rate limit. Runs requeue with backoff and fail after `max_attempts`.
+- **`PROVIDER_AUTH`:** the worker's `OPENAI_API_KEY` is wrong, revoked or out of quota. Fix the key, then start the affected runs again.
+- **`INVALID_PROVIDER_OUTPUT`:** the model failed its contract twice (once after repair). Repeated failures for one prompt version suggest a prompt or contract regression.
+- **`BUDGET_COST`:** the next call's worst case would exceed the run's cap. The user can approve more budget; raise `RUN_BUDGET_MAX_COST_USD` on the web service if this is common.
 - **`INTERNAL_ERROR`:** a bug. Search the worker logs for `run_internal_error` with the `run_id`.
+
+## Model spend and failures (M4)
+```sql
+-- Spend and outcomes per day, model and prompt version
+select date_trunc('day', created_at) as day, model, prompt_id, prompt_version, outcome,
+       count(*) as calls, sum(cost_usd) as usd, sum(input_tokens) as input_tokens, sum(output_tokens) as output_tokens
+  from echiche.model_calls
+ group by 1, 2, 3, 4, 5
+ order by 1 desc, usd desc;
+
+-- Runs whose recorded spend is close to their cap
+select id, status, error_code, cost_usd_used, budget_max_cost_usd
+  from echiche.thought_runs
+ where budget_max_cost_usd > 0 and cost_usd_used >= 0.8 * budget_max_cost_usd
+ order by updated_at desc limit 50;
+```

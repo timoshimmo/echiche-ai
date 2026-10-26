@@ -31,7 +31,7 @@ jobs:
       - run: npm run build
       - name: Client bundle must not contain server configuration
         run: |
-          if grep -rlE "DATABASE_URL|SUPABASE_URL|SUPABASE_PUBLISHABLE_KEY|sb_secret_|service_role" .next/static; then
+          if grep -rlE "DATABASE_URL|SUPABASE_URL|SUPABASE_PUBLISHABLE_KEY|sb_secret_|service_role|OPENAI_API_KEY" .next/static; then
             echo "::error::Server configuration found in the client bundle"; exit 1
           fi
       # Production dependencies must be free of high/critical advisories.
@@ -133,6 +133,12 @@ jobs:
       - run: uv run pytest
       # Committed contracts/ JSON Schemas must match the Pydantic models.
       - run: uv run python -m echiche_worker.contracts --check
-      # The production image builds and its entry point starts (config check only; no DB).
-      - run: docker build -t echiche-worker:ci .
+      # The production image builds (repo-root context) and its entry point starts (config check only;
+      # no DB, no network). The second check loads the prompt registry inside the image with a dummy key.
+      - run: docker build -f worker/Dockerfile -t echiche-worker:ci .
+        working-directory: .
       - run: docker run --rm -e DATABASE_URL=postgresql://w:placeholder@db.invalid/postgres echiche-worker:ci /app/.venv/bin/echiche-worker --check-config
+      - run: >-
+          docker run --rm -e DATABASE_URL=postgresql://w:placeholder@db.invalid/postgres
+          -e REASONING_PROVIDER=openai -e OPENAI_API_KEY=sk-ci-placeholder-not-a-key
+          echiche-worker:ci /app/.venv/bin/echiche-worker --check-config

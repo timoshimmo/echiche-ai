@@ -1,7 +1,7 @@
-"""Reasoning provider port and the deterministic (non-LLM) implementation.
+"""Reasoning provider port, error taxonomy, and the deterministic (non-LLM) provider.
 
-M4 adds a real model-backed provider behind the same protocol. Error classes carry
-the stable codes stored in thought_runs.error_code.
+The model-backed provider (M4) lives in `model_provider.py` behind the same protocol.
+Error classes carry the stable codes stored in thought_runs.error_code.
 """
 
 from __future__ import annotations
@@ -11,9 +11,9 @@ from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeout
 from dataclasses import dataclass, field
 from decimal import Decimal
-from typing import Protocol
+from typing import Literal, Protocol
 
-from echiche_worker.contracts import Stage, StageOutputV1
+from echiche_worker.contracts import Stage, StageOutput, StageOutputV2
 
 
 class ProviderError(Exception):
@@ -23,9 +23,17 @@ class ProviderError(Exception):
 
 
 class TransientProviderError(ProviderError):
-    """Temporary failure (timeout, 5xx, rate limit): safe to retry with backoff."""
+    """Temporary failure (timeout, 5xx, connection): safe to retry with backoff."""
 
     code = "PROVIDER_UNAVAILABLE"
+
+    def __init__(self, message: str = "", retry_after: float | None = None) -> None:
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
+class ProviderRateLimitedError(TransientProviderError):
+    code = "PROVIDER_RATE_LIMITED"
 
 
 class ProviderTimeoutError(TransientProviderError):
@@ -33,22 +41,82 @@ class ProviderTimeoutError(TransientProviderError):
 
 
 class InvalidProviderOutputError(ProviderError):
-    """Output failed its schema. M4 adds one bounded repair attempt before this is final."""
+    """Output failed its contract (after the one bounded repair attempt)."""
 
     code = "INVALID_PROVIDER_OUTPUT"
+
+
+class ProviderRefusedError(ProviderError):
+    code = "PROVIDER_REFUSED"
+
+
+class ProviderOutputTruncatedError(ProviderError):
+    code = "PROVIDER_OUTPUT_TRUNCATED"
+
+
+class ProviderAuthError(ProviderError):
+    """Bad or unauthorised API key: an operator problem, never retried."""
+
+    code = "PROVIDER_AUTH"
+
+
+class ProviderRequestError(ProviderError):
+    """The provider rejected the request itself (e.g. unsupported parameter)."""
+
+    code = "PROVIDER_REQUEST_INVALID"
+
+
+class BudgetPreflightError(ProviderError):
+    """The worst-case cost of the next call would exceed the run's remaining spend cap.
+    The executor pauses the run for budget instead of failing it."""
+
+    code = "BUDGET_COST"
+
+
+CallOutcome = Literal["ok", "invalid_output", "refused", "truncated", "error"]
+
+
+@dataclass(frozen=True, slots=True)
+class ModelCallRecord:
+    """Telemetry for one provider call (echiche.model_calls). Never contains content."""
+
+    stage: Stage
+    provider: str
+    model: str
+    prompt_id: str
+    prompt_version: str
+    prompt_sha256: str
+    output_schema: str
+    repair: bool
+    outcome: CallOutcome
+    error_code: str | None
+    input_tokens: int
+    cached_input_tokens: int
+    output_tokens: int
+    reasoning_tokens: int
+    cost_usd: Decimal
+    latency_ms: int
 
 
 @dataclass(frozen=True, slots=True)
 class StageContext:
     run_id: str
     prompt: str
-    previous: Mapping[Stage, StageOutputV1]
+    previous: Mapping[Stage, StageOutput]
     timeout_seconds: float
+    project_context: str = ""
+    remaining_cost_usd: Decimal = field(default_factory=lambda: Decimal("0"))
+    # Providers append one record per model call, including failed ones, so the
+    # executor can persist telemetry and count spend whatever the outcome.
+    calls: list[ModelCallRecord] = field(default_factory=list[ModelCallRecord])
+
+    def spent_usd(self) -> Decimal:
+        return sum((c.cost_usd for c in self.calls), Decimal("0"))
 
 
 @dataclass(frozen=True, slots=True)
 class StageResult:
-    output: StageOutputV1
+    output: StageOutput
     research_calls: int = 0
     cost_usd: Decimal = field(default_factory=lambda: Decimal("0"))
 
@@ -82,7 +150,9 @@ NO_RESEARCH = "No research provider is configured: no external evidence was gath
 
 
 class DeterministicProvider:
-    """The M1/M2 scaffold, split into blueprint stages. Not an LLM; no research."""
+    """The M1/M2 scaffold, split into blueprint stages. Not an LLM; no research ("demo mode")."""
+
+    name = "deterministic"
 
     def run_stage(self, stage: Stage, ctx: StageContext) -> StageResult:
         question = _clean(ctx.prompt)
@@ -117,4 +187,4 @@ class DeterministicProvider:
             ),
         }
         title, content, limitations = texts[stage]
-        return StageResult(output=StageOutputV1(stage=stage, title=title, content=content, limitations=limitations))
+        return StageResult(output=StageOutputV2(stage=stage, title=title, content=content, limitations=limitations))

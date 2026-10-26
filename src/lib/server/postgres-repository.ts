@@ -1,8 +1,8 @@
 import postgres from "postgres";
-import { REASONING_RESULT_SCHEMA_VERSION, reasoningResultSchema } from "@/lib/domain/reasoning";
+import { parseRunResult } from "@/lib/domain/reasoning";
 import {
   RUN_EVENT_TYPES, RUN_STAGES, RUN_STATUSES,
-  type CreateProjectInput, type Project, type ReasoningResult, type RunBudget, type RunEvent, type StartRunInput,
+  type CreateProjectInput, type GenerationSummary, type Project, type RunBudget, type RunEvent, type StartRunInput,
   type ThoughtRun, type UpdateProjectInput
 } from "@/lib/domain/types";
 import {
@@ -21,7 +21,11 @@ type RunRow = {
   result_schema_version: string | null; error_code: string | null; cancel_requested_at: Date | null; attempt: number;
   budget_max_steps: number; budget_max_active_seconds: number; budget_max_research_calls: number; budget_max_cost_usd: string;
   steps_used: number; active_seconds_used: string; research_calls_used: number; cost_usd_used: string;
-  completed_stages: string[]; created_at: Date; started_at: Date | null; updated_at: Date; completed_at: Date | null;
+  completed_stages: string[]; generation: GenerationRow; created_at: Date; started_at: Date | null; updated_at: Date; completed_at: Date | null;
+};
+type GenerationRow = {
+  calls: number; repairs: number; input_tokens: number; output_tokens: number; cost_usd: string | number;
+  providers: string[] | null; models: string[] | null; prompts: string[] | null;
 };
 type EventRow = { id: string; run_id: string; sequence: number; event_type: string; stage: string; message: string; created_at: Date };
 
@@ -44,7 +48,14 @@ const RUN_COLUMNS = `r.id, r.project_id, r.prompt, r.status, r.result, r.result_
   r.budget_max_cost_usd, r.steps_used, r.active_seconds_used, r.research_calls_used, r.cost_usd_used,
   r.created_at, r.started_at, r.updated_at, r.completed_at,
   coalesce((select array_agg(o.stage) from echiche.run_stage_outputs o
-             where o.run_id = r.id and o.owner_user_id = r.owner_user_id), '{}') as completed_stages`;
+             where o.run_id = r.id and o.owner_user_id = r.owner_user_id), '{}') as completed_stages,
+  (select json_build_object(
+            'calls', count(*), 'repairs', count(*) filter (where m.repair),
+            'input_tokens', coalesce(sum(m.input_tokens), 0), 'output_tokens', coalesce(sum(m.output_tokens), 0),
+            'cost_usd', coalesce(sum(m.cost_usd), 0),
+            'providers', array_agg(distinct m.provider), 'models', array_agg(distinct m.model),
+            'prompts', array_agg(distinct m.prompt_id || '@' || m.prompt_version))
+     from echiche.model_calls m where m.run_id = r.id and m.owner_user_id = r.owner_user_id) as generation`;
 
 function asProject(row: ProjectRow): Project {
   return {
@@ -59,16 +70,15 @@ const iso = (d: Date | null) => (d ? d.toISOString() : null);
 function asRun(row: RunRow): ThoughtRun {
   const status = RUN_STATUSES.find(s => s === row.status);
   if (!status) throw new DataIntegrityError("thought_run.status", row.id);
-  let result: ReasoningResult | null = null;
+  let result = null;
   if (row.result != null) {
-    if (row.result_schema_version !== REASONING_RESULT_SCHEMA_VERSION) throw new DataIntegrityError("thought_run.result_schema_version", row.id);
-    const parsed = reasoningResultSchema.safeParse(row.result);
-    if (!parsed.success) throw new DataIntegrityError("thought_run.result", row.id);
-    result = parsed.data;
+    result = parseRunResult(row.result_schema_version, row.result);
+    if (!result) throw new DataIntegrityError("thought_run.result", row.id);
   }
   const done = new Set(row.completed_stages);
   return {
-    id: row.id, projectId: row.project_id, prompt: row.prompt, status, result, errorCode: row.error_code,
+    id: row.id, projectId: row.project_id, prompt: row.prompt, status, result, generation: asGeneration(row.generation),
+    errorCode: row.error_code,
     cancelRequested: row.cancel_requested_at !== null, attempt: row.attempt,
     budget: {
       maxSteps: row.budget_max_steps, maxActiveSeconds: row.budget_max_active_seconds,
@@ -81,6 +91,16 @@ function asRun(row: RunRow): ThoughtRun {
     completedStages: RUN_STAGES.filter(stage => done.has(stage)),
     createdAt: row.created_at.toISOString(), startedAt: iso(row.started_at), updatedAt: row.updated_at.toISOString(),
     completedAt: iso(row.completed_at)
+  };
+}
+
+function asGeneration(row: GenerationRow): GenerationSummary {
+  const calls = Number(row.calls);
+  return {
+    mode: calls > 0 ? "model" : "demo",
+    providers: row.providers ?? [], models: row.models ?? [], prompts: row.prompts ?? [],
+    calls, repairs: Number(row.repairs), inputTokens: Number(row.input_tokens), outputTokens: Number(row.output_tokens),
+    costUsd: Number(row.cost_usd)
   };
 }
 

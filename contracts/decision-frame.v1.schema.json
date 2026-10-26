@@ -1,0 +1,142 @@
+{
+  "$defs": {
+    "AssumptionV1": {
+      "additionalProperties": false,
+      "properties": {
+        "confidence": {
+          "enum": [
+            "low",
+            "medium",
+            "high"
+          ],
+          "title": "Confidence",
+          "type": "string"
+        },
+        "label": {
+          "enum": [
+            "fact",
+            "inference",
+            "hypothesis",
+            "speculation",
+            "unknown"
+          ],
+          "title": "Label",
+          "type": "string"
+        },
+        "statement": {
+          "title": "Statement",
+          "type": "string"
+        }
+      },
+      "required": [
+        "statement",
+        "label",
+        "confidence"
+      ],
+      "title": "AssumptionV1",
+      "type": "object"
+    }
+  },
+  "$id": "decision-frame.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "assumptions": {
+      "items": {
+        "$ref": "#/$defs/AssumptionV1"
+      },
+      "maxItems": 10,
+      "title": "Assumptions",
+      "type": "array"
+    },
+    "clarification_needed": {
+      "title": "Clarification Needed",
+      "type": "boolean"
+    },
+    "clarifying_question": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Clarifying Question"
+    },
+    "constraints": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 10,
+      "title": "Constraints",
+      "type": "array"
+    },
+    "criteria": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 8,
+      "title": "Criteria",
+      "type": "array"
+    },
+    "decision_statement": {
+      "title": "Decision Statement",
+      "type": "string"
+    },
+    "goal": {
+      "title": "Goal",
+      "type": "string"
+    },
+    "options": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 8,
+      "title": "Options",
+      "type": "array"
+    },
+    "research_questions": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 8,
+      "title": "Research Questions",
+      "type": "array"
+    },
+    "time_horizon": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Time Horizon"
+    },
+    "unknowns": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 10,
+      "title": "Unknowns",
+      "type": "array"
+    }
+  },
+  "required": [
+    "decision_statement",
+    "goal",
+    "time_horizon",
+    "options",
+    "criteria",
+    "constraints",
+    "assumptions",
+    "unknowns",
+    "research_questions",
+    "clarification_needed",
+    "clarifying_question"
+  ],
+  "title": "DecisionFrameV1",
+  "type": "object"
+}

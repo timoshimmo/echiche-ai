@@ -16,6 +16,7 @@ ADR-005 hosting, ADR-006 runs. First complete [supabase-setup.md](supabase-setup
    | web | `SUPABASE_PUBLISHABLE_KEY` | publishable (anon) key, **never** the secret/service-role key |
    | web | `APP_ORIGIN` | `https://echiche-web.onrender.com`, or your custom domain once attached |
    | worker | `DATABASE_URL` | Supabase pooler URL as **`echiche_worker.<project-ref>`** |
+   | worker | `OPENAI_API_KEY` | Leave **empty** until you enable live reasoning (below). Never set it on the web service: it refuses to start. |
 
 4. **Point Supabase at the app:** in Supabase Auth URL settings, set the Site URL to `APP_ORIGIN` and add `<APP_ORIGIN>/auth/callback` to the redirect URLs.
 5. **Workspace plan:** Hobby (free) workspace is fine to start. Upgrade to Pro ($25 flat) for preview environments; then set `previews` in `render.yaml`.
@@ -38,10 +39,21 @@ Write migrations to be backward compatible with the currently running code (add 
 2. In the worker logs, a `worker_connected` line appears, and `echiche.worker_heartbeats` has one row per worker instance.
 3. Sign in, create a project, start a run: the UI moves through the stages to "Ready for review", then Accept works.
 4. With a second account, the first account's run returns 404.
+5. The result is labelled **Demo mode** until live reasoning is enabled, then **Live model (OpenAI · …)**.
+
+## Enabling live reasoning (OpenAI, ADR-007)
+Paid calls start only after these steps; until then the worker runs the deterministic demo mode.
+1. **Approve** ADR-007 D9–D11, and update the privacy notice: project and question text are sent to OpenAI (not used for training by default; abuse-monitoring logs up to 30 days; `store=false`).
+2. In OpenAI, create a **project-scoped key** with a monthly budget limit. For EU data residency, get OpenAI's approval first, then set `OPENAI_DATA_RESIDENCY=eu` (+10% price).
+3. On **`echiche-worker`** only: set `OPENAI_API_KEY` (secret), then set `REASONING_PROVIDER=openai`. Optionally change `OPENAI_MODEL` to another priced model (`gpt-6-luna` is cheapest). An unpriced model makes the worker exit at start-up with `config_invalid`.
+4. Check the worker's start-up log: `worker_starting` with `"provider":"openai:<model>"`. A bad key shows up as runs failing with `PROVIDER_AUTH`.
+5. Optional, from your machine: run the one-call live smoke test (`cd worker && ECHICHE_LIVE_OPENAI=1 OPENAI_API_KEY=… uv run pytest -m live -s`, cost < $0.05).
+
+**To switch back** to demo mode, set `REASONING_PROVIDER=deterministic`. Runs already in progress with model checkpoints then fail with `REASONING_MODE_MISMATCH`; start them again.
 
 ## Scaling and shutdown
 - **More throughput:** increase the worker's instance count. Claims are safe under concurrency (`SKIP LOCKED` plus leases), and each instance gets a unique `WORKER_ID` from its hostname.
-- **During deploys:** Render sends SIGTERM. The worker finishes its current stage and releases the run without consuming an attempt; another instance or the new version continues it. `maxShutdownDelaySeconds: 120` must stay above `WORKER_STAGE_TIMEOUT_SECONDS: 90`.
+- **During deploys:** Render sends SIGTERM. The worker finishes its current stage and releases the run without consuming an attempt; another instance or the new version continues it. `maxShutdownDelaySeconds: 120` must stay above `WORKER_STAGE_TIMEOUT_SECONDS: 110`.
 
 ## Rollback
 Use Render's **Rollback** on a service. Database changes are forward-only: if a migration is the problem, ship a new corrective migration (never edit an applied one).

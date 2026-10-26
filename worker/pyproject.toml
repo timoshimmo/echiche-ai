@@ -1,6 +1,6 @@
 [project]
 name = "echiche-worker"
-version = "0.3.0"
+version = "0.4.0"
 description = "Echiche AI orchestration worker (ADR-001, ADR-006): claims runs from Postgres and executes them durably."
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
@@ -8,6 +8,7 @@ requires-python = ">=3.12,<3.13"
 dependencies = [
   "pydantic==2.14.1",
   "psycopg[binary]==3.3.6",
+  "openai==3.29.0",
 ]
 
 [project.scripts]
@@ -46,5 +47,8 @@ typeCheckingMode = "strict"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 # Integration tests need a migrated database; run them with `pytest -m integration`.
-addopts = "-ra --strict-markers -m 'not integration'"
-markers = ["integration: needs WORKER_TEST_DATABASE_URL and TEST_ADMIN_DATABASE_URL (disposable, migrated database)"]
+addopts = "-ra --strict-markers -m 'not integration and not live'"
+markers = [
+  "integration: needs WORKER_TEST_DATABASE_URL and TEST_ADMIN_DATABASE_URL (disposable, migrated database)",
+  "live: makes a REAL, billed provider call; needs ECHICHE_LIVE_OPENAI=1 and OPENAI_API_KEY. Never in CI.",
+]

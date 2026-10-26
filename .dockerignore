@@ -1,0 +1,9 @@
+# Only the worker image is built with Docker (the web service uses Render's Node runtime).
+# Whitelist: everything else (node_modules, .env*, .git, tests, docs) stays out of the build context.
+*
+!worker/pyproject.toml
+!worker/uv.lock
+!worker/README.md
+!worker/src
+!prompts/runtime
+**/__pycache__

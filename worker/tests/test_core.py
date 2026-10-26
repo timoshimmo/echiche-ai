@@ -9,7 +9,7 @@ from pydantic import ValidationError
 
 from echiche_worker import contracts
 from echiche_worker.compose import MissingStageError, compose_result
-from echiche_worker.contracts import STAGES, ReasoningScaffoldResultV1, Stage, StageOutputV1
+from echiche_worker.contracts import STAGES, ReasoningScaffoldResultV1, Stage, StageOutput, StageOutputV1
 from echiche_worker.executor import budget_exceeded
 from echiche_worker.provider import (
     DeterministicProvider,
@@ -25,9 +25,9 @@ from echiche_worker.store import Budget, ClaimedRun, Usage
 CONTRACTS_DIR = Path(__file__).resolve().parents[2] / "contracts"
 
 
-def all_outputs(prompt: str = "Should we enter market X next year?") -> dict[Stage, StageOutputV1]:
+def all_outputs(prompt: str = "Should we enter market X next year?") -> dict[Stage, StageOutput]:
     provider = DeterministicProvider()
-    outputs: dict[Stage, StageOutputV1] = {}
+    outputs: dict[Stage, StageOutput] = {}
     for stage in STAGES:
         ctx = StageContext(run_id="r", prompt=prompt, previous=dict(outputs), timeout_seconds=5)
         outputs[stage] = provider.run_stage(stage, ctx).output

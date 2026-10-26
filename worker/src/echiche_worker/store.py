@@ -10,22 +10,26 @@ counters and the stage event are committed in one transaction.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
-from decimal import Decimal
+from collections.abc import Sequence
+from dataclasses import dataclass, replace
+from decimal import ROUND_UP, Decimal
 from typing import LiteralString, cast
 
 import psycopg
 from psycopg.rows import DictRow, dict_row
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from echiche_worker.contracts import (
-    RESULT_SCHEMA_VERSION,
+    MODEL_OUTPUTS,
     STAGE_OUTPUT_SCHEMA_VERSION,
+    STAGE_OUTPUT_V2_SCHEMA_VERSION,
     STAGES,
-    ReasoningScaffoldResultV1,
     Stage,
+    StageOutput,
     StageOutputV1,
+    StageOutputV2,
 )
+from echiche_worker.provider import ModelCallRecord
 
 ACTIVE = ("planning", "researching", "critiquing", "verifying", "synthesizing")
 Row = DictRow
@@ -65,6 +69,22 @@ class ClaimedRun:
     max_attempts: int
     budget: Budget
     usage: Usage
+    project_context: str = ""
+
+
+def to_v2(output: StageOutput) -> StageOutputV2:
+    if isinstance(output, StageOutputV2):
+        return output
+    return StageOutputV2(stage=output.stage, title=output.title, content=output.content, limitations=output.limitations)
+
+
+def spend(amount: Decimal) -> Decimal:
+    """cost_usd_used is numeric(10,4): round each increment up so spend is never under-counted."""
+    return amount.quantize(Decimal("0.0001"), rounding=ROUND_UP)
+
+
+def project_context(title: str, problem_statement: str) -> str:
+    return f"Project title: {title.strip()}\n\nProblem statement:\n{problem_statement.strip()}"
 
 
 def connect(database_url: str) -> psycopg.Connection[Row]:
@@ -148,7 +168,16 @@ class RunStore:
                    returning r.*""",
                 (list(ACTIVE), self.worker_id, self.lease_seconds),
             ).fetchone()
-        return _claimed(row) if row else None
+            if row is None:
+                return None
+            project = self.conn.execute(
+                "select title, problem_statement from echiche.projects where id = %s", (row["project_id"],)
+            ).fetchone()
+        claimed = _claimed(row)
+        if project is None:
+            return claimed
+        context = project_context(cast(str, project["title"]), cast(str, project["problem_statement"]))
+        return replace(claimed, project_context=context)
 
     def renew_lease(self, run_id: str) -> bool:
         cur = self.conn.execute(
@@ -160,17 +189,28 @@ class RunStore:
 
     # --- reads -------------------------------------------------------------------------
 
-    def load_checkpoints(self, run_id: str) -> dict[Stage, StageOutputV1]:
+    def load_checkpoints(self, run_id: str) -> dict[Stage, StageOutputV2]:
+        """Accepts stage-output.v1 (M3) and v2 checkpoints, so runs paused before an upgrade
+        resume cleanly. Any model payload is re-validated against its contract."""
         rows = self.conn.execute(
             "select stage, output, output_schema_version from echiche.run_stage_outputs where run_id = %s",
             (run_id,),
         ).fetchall()
-        result: dict[Stage, StageOutputV1] = {}
+        result: dict[Stage, StageOutputV2] = {}
         for row in rows:
-            if row["output_schema_version"] != STAGE_OUTPUT_SCHEMA_VERSION:
-                raise CorruptCheckpointError(f"unknown checkpoint version for {row['stage']}")
+            version = row["output_schema_version"]
             try:
-                output = StageOutputV1.model_validate(row["output"])
+                if version == STAGE_OUTPUT_SCHEMA_VERSION:
+                    output = to_v2(StageOutputV1.model_validate(row["output"]))
+                elif version == STAGE_OUTPUT_V2_SCHEMA_VERSION:
+                    output = StageOutputV2.model_validate(row["output"])
+                    if output.data_schema is not None or output.data is not None:
+                        contract = MODEL_OUTPUTS.get(output.data_schema or "")
+                        if contract is None or output.data is None:
+                            raise CorruptCheckpointError(f"unknown data contract for {row['stage']}")
+                        contract.model_validate(output.data)
+                else:
+                    raise CorruptCheckpointError(f"unknown checkpoint version for {row['stage']}")
             except ValidationError as exc:
                 raise CorruptCheckpointError(f"invalid checkpoint for {row['stage']}") from exc
             result[output.stage] = output
@@ -216,9 +256,44 @@ class RunStore:
             )
             self._event(run, "stage", stage, f"{title}: started")
 
+    def _insert_calls(self, run: ClaimedRun, calls: Sequence[ModelCallRecord]) -> None:
+        for c in calls:
+            self.conn.execute(
+                """insert into echiche.model_calls
+                     (owner_user_id, run_id, stage, attempt, provider, model, prompt_id, prompt_version, prompt_sha256,
+                      output_schema, repair, outcome, error_code, input_tokens, cached_input_tokens, output_tokens,
+                      reasoning_tokens, cost_usd, latency_ms)
+                   values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                (
+                    run.owner_user_id, run.id, c.stage, run.attempt, c.provider, c.model, c.prompt_id,
+                    c.prompt_version, c.prompt_sha256, c.output_schema, c.repair, c.outcome, c.error_code,
+                    c.input_tokens, c.cached_input_tokens, c.output_tokens, c.reasoning_tokens, c.cost_usd,
+                    c.latency_ms,
+                ),
+            )  # fmt: skip
+
+    def record_calls(self, run: ClaimedRun, calls: Sequence[ModelCallRecord]) -> None:
+        """Persists telemetry and counts the spend of calls whose stage did not complete
+        (failure, retry, pause), so a failing run still consumes its cost budget."""
+        if not calls:
+            return
+        with self.conn.transaction():
+            self._guarded_update(
+                run.id, "cost_usd_used = cost_usd_used + %s", (spend(sum((c.cost_usd for c in calls), Decimal(0))),)
+            )
+            self._insert_calls(run, calls)
+
     def commit_stage(
-        self, run: ClaimedRun, output: StageOutputV1, duration_ms: int, research_calls: int, cost_usd: Decimal
+        self,
+        run: ClaimedRun,
+        output: StageOutput,
+        duration_ms: int,
+        research_calls: int,
+        cost_usd: Decimal,
+        calls: Sequence[ModelCallRecord] = (),
     ) -> Usage:
+        """cost_usd must include the cost of `calls`; both are written in one transaction."""
+        output = to_v2(output)
         with self.conn.transaction():
             inserted = self.conn.execute(
                 """insert into echiche.run_stage_outputs
@@ -230,7 +305,7 @@ class RunStore:
                     run.owner_user_id,
                     output.stage,
                     json.dumps(output.model_dump(mode="json")),
-                    STAGE_OUTPUT_SCHEMA_VERSION,
+                    STAGE_OUTPUT_V2_SCHEMA_VERSION,
                     run.attempt,
                     duration_ms,
                 ),
@@ -246,18 +321,19 @@ class RunStore:
                        research_calls_used = research_calls_used + %s,
                        cost_usd_used = cost_usd_used + %s,
                        lease_expires_at = now() + make_interval(secs => %s)""",
-                    (Decimal(duration_ms) / 1000, research_calls, cost_usd, self.lease_seconds),
+                    (Decimal(duration_ms) / 1000, research_calls, spend(cost_usd), self.lease_seconds),
                 )
+                self._insert_calls(run, calls)
                 self._event(run, "stage", output.stage, f"{output.title}: completed")
         return _claimed(row).usage
 
-    def finish(self, run: ClaimedRun, result: ReasoningScaffoldResultV1) -> None:
+    def finish(self, run: ClaimedRun, schema_version: str, result: BaseModel) -> None:
         with self.conn.transaction():
             self._guarded_update(
                 run.id,
                 """status = 'awaiting_user_review', result = %s::jsonb, result_schema_version = %s,
                    error_code = null, claimed_by = null, lease_expires_at = null""",
-                (json.dumps(result.model_dump(mode="json")), RESULT_SCHEMA_VERSION),
+                (json.dumps(result.model_dump(mode="json")), schema_version),
             )
             self._event(run, "result", "complete", "Decision brief ready for your review.")
 

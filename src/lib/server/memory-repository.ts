@@ -41,6 +41,9 @@ export class MemoryStore implements Store {
 }
 
 const HOUR_MS = 60 * 60 * 1000;
+const DEMO_GENERATION: ThoughtRun["generation"] = {
+  mode: "demo", providers: [], models: [], prompts: [], calls: 0, repairs: 0, inputTokens: 0, outputTokens: 0, costUsd: 0
+};
 function strip<T extends object>(owned: Owned<T>): T {
   const copy: Partial<Owned<T> & { idempotencyKey?: string }> = { ...owned };
   delete copy.ownerId;
@@ -118,7 +121,7 @@ class MemoryOwnerRepository implements OwnerScopedRepository {
     if (this.recentCount(this.store.runs.values()) >= options.maxPerHour) throw new RateLimitError("runs", 3600);
     const now = new Date().toISOString();
     const run: StoredRun = {
-      id: randomUUID(), projectId, prompt: input.prompt, status: "queued", result: null, errorCode: null,
+      id: randomUUID(), projectId, prompt: input.prompt, status: "queued", result: null, generation: DEMO_GENERATION, errorCode: null,
       cancelRequested: false, attempt: 0, budget: { ...options.budget },
       usage: { steps: 0, activeSeconds: 0, researchCalls: 0, costUsd: 0 }, completedStages: [],
       createdAt: now, startedAt: null, updatedAt: now, completedAt: null,

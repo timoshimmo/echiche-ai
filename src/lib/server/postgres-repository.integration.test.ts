@@ -177,12 +177,37 @@ describe("end to end across languages (ADR-001 D8): web queues → Python worker
     const done = await repo.getRun(run.id); // parsed with the Zod mirror of the Pydantic contract
     expect(done).toMatchObject({ status: "awaiting_user_review", errorCode: null, attempt: 1 });
     expect(done?.completedStages).toEqual(["planning", "researching", "critiquing", "verifying", "synthesizing"]);
-    expect(done?.result?.stages.map(s => s.stage)).toEqual(["frame", "challenge", "synthesize"]);
-    expect(done?.result?.caveat).toMatch(/No research provider is configured/);
+    expect(done?.result?.schemaVersion).toBe("reasoning-scaffold.v1");
+    if (done?.result?.schemaVersion !== "reasoning-scaffold.v1") throw new Error("expected the demo scaffold");
+    expect(done.result.data.stages.map(s => s.stage)).toEqual(["frame", "challenge", "synthesize"]);
+    expect(done.result.data.caveat).toMatch(/No research provider is configured/);
+    expect(done.generation).toMatchObject({ mode: "demo", calls: 0, costUsd: 0 });
     const events = await repo.listEvents(run.id);
     expect(events.map(e => e.sequence)).toEqual(events.map((_, i) => i + 1));
     expect(events.at(-1)).toMatchObject({ type: "result", stage: "complete" });
 
     expect((await repo.acceptRun(run.id))?.status).toBe("completed");
+  });
+
+  it("reads a model-generated decision brief and its call telemetry through RLS (scripted model, no network)", async () => {
+    const { repo, run } = await aliceRun();
+    const bobRepo = store.forOwner(bob);
+    const worker = spawnSync("uv", ["run", "--no-sync", "--directory", workerDir, "python", "-m", "tests.e2e_fake_model"], {
+      env: { ...process.env, DATABASE_URL: workerUrl }, encoding: "utf8", timeout: 120_000
+    });
+    expect(worker.status, worker.stderr).toBe(0);
+
+    const done = await repo.getRun(run.id);
+    expect(done?.status).toBe("awaiting_user_review");
+    if (done?.result?.schemaVersion !== "decision-brief.v1") throw new Error("expected a decision brief");
+    expect(done.result.data.recommendation.summary.length).toBeGreaterThan(0);
+    expect(done.result.data.citations).toEqual([]);
+    expect(done.generation).toMatchObject({ mode: "model", providers: ["openai"], calls: 3, repairs: 0 });
+    expect(done.generation.prompts.sort()).toEqual(
+      ["decision-brief-synthesis@2.0.0", "decision-critic@2.0.0", "decision-framing@2.0.0"]
+    );
+    expect(done.generation.costUsd).toBeGreaterThan(0);
+    expect(done.usage.costUsd).toBeGreaterThanOrEqual(done.generation.costUsd);
+    expect(await bobRepo.getRun(run.id)).toBeNull();
   });
 });

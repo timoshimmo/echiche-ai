@@ -30,6 +30,8 @@ export type ServerConfig = {
 
 /** Variables that must never be present in the web app's environment. */
 const FORBIDDEN_SECRETS = ["SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_SECRET_KEY", "SERVICE_ROLE_KEY"];
+/** Model-provider keys belong only to the worker (ADR-007); the web app never calls a model. */
+const WORKER_ONLY_SECRETS = ["OPENAI_API_KEY"];
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
 const blankToUndefined = (value: unknown) => (typeof value === "string" && value.trim() === "" ? undefined : value);
@@ -88,6 +90,9 @@ export function parseServerConfig(env: Record<string, string | undefined>): Serv
   const issues: string[] = [];
   for (const name of FORBIDDEN_SECRETS) {
     if (env[name]?.trim()) issues.push(`${name} must not be set in the web app environment (it bypasses all data security)`);
+  }
+  for (const name of WORKER_ONLY_SECRETS) {
+    if (env[name]?.trim()) issues.push(`${name} must not be set in the web app environment (only the worker calls the model provider)`);
   }
 
   const parsed = envSchema.safeParse(env);

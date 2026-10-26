@@ -40,6 +40,10 @@ def run_with_retries[T](
             if attempt == policy.max_tries:
                 raise
             on_retry(attempt, error)
-            if shutdown.wait(policy.delay(attempt)):
+            wait = policy.delay(attempt)
+            if error.retry_after is not None:
+                # Honour the provider's Retry-After, bounded so one stage cannot stall for long.
+                wait = max(wait, min(error.retry_after, policy.cap_seconds * 4))
+            if shutdown.wait(wait):
                 raise
     raise AssertionError("unreachable")

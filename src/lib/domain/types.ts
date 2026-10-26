@@ -1,7 +1,7 @@
 // No runtime dependencies (only `import type`): safe to import from client components.
-import type { ReasoningResult } from "./reasoning";
+import type { RunResult } from "./reasoning";
 
-export type { ReasoningResult, ReasoningStage } from "./reasoning";
+export type { DecisionBrief, ReasoningResult, ReasoningStage, RunResult } from "./reasoning";
 
 /** Owner is implicit (the signed-in user) and never serialised to clients. */
 export type Project = {
@@ -42,12 +42,29 @@ export type RunEvent = {
 export type RunBudget = { maxSteps: number; maxActiveSeconds: number; maxResearchCalls: number; maxCostUsd: number };
 export type RunUsage = { steps: number; activeSeconds: number; researchCalls: number; costUsd: number };
 
+/**
+ * How a run's content was produced, from echiche.model_calls (telemetry only, no content).
+ * "demo": no model call was made (deterministic scaffold). Costs are in USD.
+ */
+export type GenerationSummary = {
+  mode: "model" | "demo";
+  providers: string[];
+  models: string[];
+  prompts: string[];
+  calls: number;
+  repairs: number;
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number;
+};
+
 export type ThoughtRun = {
   id: string;
   projectId: string;
   prompt: string;
   status: RunStatus;
-  result: ReasoningResult | null;
+  result: RunResult | null;
+  generation: GenerationSummary;
   /** Stable machine-readable reason (failed, paused, or the last transient retry). See RUN_ERROR_MESSAGES. */
   errorCode: string | null;
   cancelRequested: boolean;
@@ -69,10 +86,17 @@ export const RUN_ERROR_MESSAGES: Record<string, string> = {
   BUDGET_STEPS: "Paused: the step budget for this run was used up.",
   BUDGET_TIME: "Paused: the processing-time budget for this run was used up.",
   BUDGET_RESEARCH: "Paused: the research budget for this run was used up.",
-  BUDGET_COST: "Paused: the spending budget for this run was used up.",
+  BUDGET_COST: "Paused: the next step could exceed this run's spending budget.",
   PROVIDER_TIMEOUT: "The reasoning service took too long to respond.",
   PROVIDER_UNAVAILABLE: "The reasoning service was temporarily unavailable.",
-  INVALID_PROVIDER_OUTPUT: "The reasoning service returned output that failed validation.",
+  INVALID_PROVIDER_OUTPUT: "The reasoning service returned output that failed validation, even after one repair attempt.",
+  PROVIDER_RATE_LIMITED: "The reasoning service is busy; the run will retry automatically.",
+  PROVIDER_REFUSED: "The reasoning service declined to answer this request.",
+  PROVIDER_OUTPUT_TRUNCATED: "The reasoning service's answer was cut off before it was complete.",
+  PROVIDER_AUTH: "The reasoning service rejected this deployment's credentials. An operator needs to fix the configuration.",
+  PROVIDER_REQUEST_INVALID: "The reasoning service rejected the request configuration.",
+  PROVIDER_ERROR: "The reasoning service failed to process this run.",
+  REASONING_MODE_MISMATCH: "This run was started in a different reasoning mode and cannot be continued.",
   RESULT_INVALID: "The final result failed validation and was not saved.",
   CHECKPOINT_INVALID: "Saved progress for this run could not be read.",
   RUN_RETRIES_EXHAUSTED: "The run failed after several attempts.",

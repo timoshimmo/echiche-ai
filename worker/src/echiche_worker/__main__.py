@@ -24,8 +24,10 @@ import psycopg
 from echiche_worker import __version__
 from echiche_worker.config import ConfigError, WorkerConfig, parse_worker_config
 from echiche_worker.executor import ExecutorSettings, execute
+from echiche_worker.factory import build_provider
 from echiche_worker.log import log
-from echiche_worker.provider import DeterministicProvider, ReasoningProvider
+from echiche_worker.model_provider import describe
+from echiche_worker.provider import ReasoningProvider
 from echiche_worker.store import RunStore, connect
 
 
@@ -120,11 +122,12 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         config = parse_worker_config(os.environ)
+        provider = build_provider(config)
     except ConfigError as error:
         log("error", "config_invalid", issues=error.issues)
         return 2
     if args.check_config:
-        log("info", "config_valid", version=__version__, worker_id=config.worker_id)
+        log("info", "config_valid", version=__version__, worker_id=config.worker_id, provider=describe(provider))
         return 0
 
     shutdown = Event()
@@ -135,7 +138,8 @@ def main(argv: list[str] | None = None) -> int:
 
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
-    return run_loop(config, shutdown, DeterministicProvider(), once=args.once)
+    log("info", "worker_starting", version=__version__, provider=describe(provider))
+    return run_loop(config, shutdown, provider, once=args.once)
 
 
 if __name__ == "__main__":

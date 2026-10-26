@@ -1,0 +1,117 @@
+{
+  "$defs": {
+    "ChallengedAssumptionV1": {
+      "additionalProperties": false,
+      "properties": {
+        "assumption": {
+          "title": "Assumption",
+          "type": "string"
+        },
+        "challenge": {
+          "title": "Challenge",
+          "type": "string"
+        },
+        "severity": {
+          "enum": [
+            "low",
+            "medium",
+            "high"
+          ],
+          "title": "Severity",
+          "type": "string"
+        }
+      },
+      "required": [
+        "assumption",
+        "challenge",
+        "severity"
+      ],
+      "title": "ChallengedAssumptionV1",
+      "type": "object"
+    },
+    "RiskV1": {
+      "additionalProperties": false,
+      "properties": {
+        "reversibility": {
+          "enum": [
+            "reversible",
+            "partly_reversible",
+            "irreversible"
+          ],
+          "title": "Reversibility",
+          "type": "string"
+        },
+        "risk": {
+          "title": "Risk",
+          "type": "string"
+        },
+        "severity": {
+          "enum": [
+            "low",
+            "medium",
+            "high"
+          ],
+          "title": "Severity",
+          "type": "string"
+        }
+      },
+      "required": [
+        "risk",
+        "severity",
+        "reversibility"
+      ],
+      "title": "RiskV1",
+      "type": "object"
+    }
+  },
+  "$id": "critique.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "alternative_explanations": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 6,
+      "title": "Alternative Explanations",
+      "type": "array"
+    },
+    "challenged_assumptions": {
+      "items": {
+        "$ref": "#/$defs/ChallengedAssumptionV1"
+      },
+      "maxItems": 8,
+      "title": "Challenged Assumptions",
+      "type": "array"
+    },
+    "missing_evidence": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 8,
+      "title": "Missing Evidence",
+      "type": "array"
+    },
+    "risks": {
+      "items": {
+        "$ref": "#/$defs/RiskV1"
+      },
+      "maxItems": 8,
+      "title": "Risks",
+      "type": "array"
+    },
+    "strongest_objection": {
+      "title": "Strongest Objection",
+      "type": "string"
+    }
+  },
+  "required": [
+    "strongest_objection",
+    "challenged_assumptions",
+    "alternative_explanations",
+    "missing_evidence",
+    "risks"
+  ],
+  "title": "CritiqueV1",
+  "type": "object"
+}

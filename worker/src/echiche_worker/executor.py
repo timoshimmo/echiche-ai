@@ -5,12 +5,16 @@ Failure policy (stable codes in thought_runs.error_code):
   transient provider error, retries exhausted in this claim -> back to queue with backoff,
       or failed with that code once max_attempts is used up
   invalid provider output / permanent provider error        -> failed (code from the error)
+  worst-case model cost above the remaining spend cap        -> paused_for_budget BUDGET_COST
   composed result breaks its contract                       -> failed RESULT_INVALID
   corrupt checkpoint                                         -> failed CHECKPOINT_INVALID
   claim count above max_attempts                             -> failed RUN_RETRIES_EXHAUSTED
   unexpected exception                                       -> failed INTERNAL_ERROR
   lease lost                                                 -> stop, write nothing
   graceful shutdown                                          -> back to queue, attempt not consumed
+
+Model-call telemetry and spend are persisted on every path that follows a call (commit,
+failure, requeue, pause), so failed and retried calls still count against the budget.
 """
 
 from __future__ import annotations
@@ -25,10 +29,11 @@ from threading import Event
 
 from pydantic import ValidationError
 
-from echiche_worker.compose import MissingStageError, compose_result
+from echiche_worker.compose import MissingStageError, compose_final
 from echiche_worker.contracts import STAGES, Stage
 from echiche_worker.log import log
 from echiche_worker.provider import (
+    BudgetPreflightError,
     ProviderError,
     ReasoningProvider,
     StageContext,
@@ -37,7 +42,7 @@ from echiche_worker.provider import (
     call_with_timeout,
 )
 from echiche_worker.retry import RetryPolicy, run_with_retries
-from echiche_worker.store import ClaimedRun, CorruptCheckpointError, LeaseLostError, RunStore, Usage
+from echiche_worker.store import ClaimedRun, CorruptCheckpointError, LeaseLostError, RunStore, Usage, to_v2
 
 STAGE_TITLES: dict[Stage, str] = {
     "planning": "Planning",
@@ -181,7 +186,14 @@ def _execute(
         store.begin_stage(run, stage, STAGE_TITLES[stage])
         remaining = float(run.budget.max_active_seconds - usage.active_seconds)
         timeout = max(0.001, min(settings.stage_timeout_seconds, remaining))
-        ctx = StageContext(run_id=run.id, prompt=run.prompt, previous=dict(outputs), timeout_seconds=timeout)
+        ctx = StageContext(
+            run_id=run.id,
+            prompt=run.prompt,
+            previous=dict(outputs),
+            timeout_seconds=timeout,
+            project_context=run.project_context,
+            remaining_cost_usd=run.budget.max_cost_usd - usage.cost_usd,
+        )
         started = time.monotonic()
         try:
             keeper_interval = max(1.0, store.lease_seconds / 3)
@@ -192,7 +204,13 @@ def _execute(
                     raise LeaseLostError(run.id)
             else:
                 result = _call(provider, stage, ctx, settings, shutdown, fields)
+        except BudgetPreflightError as error:
+            store.record_calls(run, ctx.calls)
+            store.pause_for_budget(run, error.code)
+            log("info", "run_paused_for_budget", stage=stage, error_code=error.code, **fields)
+            return Outcome.PAUSED
         except TransientProviderError as error:
+            store.record_calls(run, ctx.calls)
             if shutdown.is_set():
                 store.release_for_retry(run, 0, "WORKER_SHUTDOWN", consume_attempt=False)
                 return Outcome.REQUEUED
@@ -200,31 +218,34 @@ def _execute(
                 store.fail(run, error.code)
                 log("error", "run_failed", stage=stage, error_code=error.code, **fields)
                 return Outcome.FAILED
-            delay = settings.requeue_base_seconds * (2 ** (run.attempt - 1))
+            delay = max(settings.requeue_base_seconds * (2 ** (run.attempt - 1)), error.retry_after or 0)
             store.release_for_retry(run, delay, error.code)
             log("warn", "run_requeued", stage=stage, error_code=error.code, **fields)
             return Outcome.REQUEUED
         except ProviderError as error:
+            store.record_calls(run, ctx.calls)
             store.fail(run, error.code)
             log("error", "run_failed", stage=stage, error_code=error.code, **fields)
             return Outcome.FAILED
 
         if result.output.stage != stage:
+            store.record_calls(run, ctx.calls)
             store.fail(run, "INVALID_PROVIDER_OUTPUT")
             log("error", "run_failed", stage=stage, error_code="INVALID_PROVIDER_OUTPUT", **fields)
             return Outcome.FAILED
         duration_ms = int((time.monotonic() - started) * 1000)
-        usage = store.commit_stage(run, result.output, duration_ms, result.research_calls, Decimal(result.cost_usd))
-        outputs[stage] = result.output
+        cost = Decimal(result.cost_usd) + ctx.spent_usd()
+        usage = store.commit_stage(run, result.output, duration_ms, result.research_calls, cost, ctx.calls)
+        outputs[stage] = to_v2(result.output)
         log("info", "stage_completed", stage=stage, duration_ms=duration_ms, **fields)
 
     try:
-        final = compose_result(run.prompt, outputs)
+        schema_version, final = compose_final(run.prompt, outputs)
     except (MissingStageError, ValidationError):
         store.fail(run, "RESULT_INVALID")
         log("error", "run_failed", error_code="RESULT_INVALID", **fields)
         return Outcome.FAILED
-    store.finish(run, final)
+    store.finish(run, schema_version, final)
     log("info", "run_awaiting_review", **fields)
     return Outcome.AWAITING_REVIEW
 

@@ -64,6 +64,12 @@ describe("parseServerConfig", () => {
     expect(parseServerConfig({ ...BASE, SUPABASE_PUBLISHABLE_KEY: jwt({ role: "anon", iss: "supabase" }) }).nodeEnv).toBe("development");
   });
 
+  it("refuses the model-provider key: only the worker may hold it (ADR-007)", () => {
+    const issues = issuesOf({ ...BASE, OPENAI_API_KEY: "sk-test-placeholder" });
+    expect(issues[0]).toMatch(/OPENAI_API_KEY must not be set in the web app environment \(only the worker/);
+    expect(issues.join(" ")).not.toContain("sk-test-placeholder");
+  });
+
   it("requires https for Supabase except a local stack in development", () => {
     expect(issuesOf({ ...PROD, SUPABASE_URL: "http://127.0.0.1:54321" })[0]).toMatch(/must use https/);
     expect(issuesOf({ ...BASE, SUPABASE_URL: "http://supabase.internal" })[0]).toMatch(/must use https/);

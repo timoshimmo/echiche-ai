@@ -1,0 +1,456 @@
+[
+  {
+    "decision_question": "Should Acme run a paid scheduling pilot with three clinics this quarter?",
+    "scope": "Pilot design and go/no-go for this quarter only; full launch is out of scope.",
+    "criteria_and_tradeoffs": [
+      {
+        "criterion": "Learning speed",
+        "tradeoff": "Paid pilots learn faster about price but recruit fewer clinics."
+      }
+    ],
+    "key_assumptions": [
+      {
+        "statement": "Clinics feel the pain strongly enough to pay.",
+        "label": "hypothesis",
+        "confidence": "medium"
+      }
+    ],
+    "supporting_evidence": [
+      {
+        "point": "Three clinics have expressed interest.",
+        "label": "fact",
+        "source_ids": []
+      }
+    ],
+    "counterevidence": [
+      {
+        "point": "No price has been tested yet.",
+        "label": "fact",
+        "source_ids": []
+      }
+    ],
+    "strongest_objection": "Early adopters may overstate demand.",
+    "alternatives": [
+      {
+        "option": "Free pilot",
+        "why_not_now": "It would not test willingness to pay."
+      }
+    ],
+    "confidence": {
+      "level": "low",
+      "explanation": "No external evidence was gathered; the recommendation rests on user-provided facts."
+    },
+    "what_would_change": [
+      "Two of three clinics declining the proposed price."
+    ],
+    "next_actions": [
+      {
+        "action": "Offer the pilot at the proposed price to all three clinics.",
+        "success_signal": "Two clinics sign within three weeks.",
+        "reversible": true
+      }
+    ],
+    "citations": [],
+    "proposed_memory_updates": [
+      {
+        "kind": "decision",
+        "statement": "Testing willingness to pay before a full launch."
+      }
+    ],
+    "limitations": [
+      "No external evidence was gathered or verified."
+    ]
+  },
+  {
+    "decision_question": "Should Acme run a paid scheduling pilot with three clinics this quarter?",
+    "scope": "Pilot design and go/no-go for this quarter only; full launch is out of scope.",
+    "recommendation": {
+      "summary": "Run a small paid pilot with explicit exit criteria.",
+      "rationale": "It tests willingness to pay directly, at limited cost, and is reversible."
+    },
+    "criteria_and_tradeoffs": [
+      {
+        "criterion": "Learning speed",
+        "tradeoff": "Paid pilots learn faster about price but recruit fewer clinics."
+      }
+    ],
+    "key_assumptions": [
+      {
+        "statement": "Clinics feel the pain strongly enough to pay.",
+        "label": "hypothesis",
+        "confidence": "medium"
+      }
+    ],
+    "supporting_evidence": [
+      {
+        "point": "Three clinics have expressed interest.",
+        "label": "fact",
+        "source_ids": []
+      }
+    ],
+    "counterevidence": [
+      {
+        "point": "No price has been tested yet.",
+        "label": "fact",
+        "source_ids": []
+      }
+    ],
+    "strongest_objection": "Early adopters may overstate demand.",
+    "alternatives": [
+      {
+        "option": "Free pilot",
+        "why_not_now": "It would not test willingness to pay."
+      }
+    ],
+    "confidence": {
+      "level": "low",
+      "explanation": "No external evidence was gathered; the recommendation rests on user-provided facts."
+    },
+    "what_would_change": [
+      "Two of three clinics declining the proposed price."
+    ],
+    "next_actions": [
+      {
+        "action": "Offer the pilot at the proposed price to all three clinics.",
+        "success_signal": "Two clinics sign within three weeks.",
+        "reversible": true
+      }
+    ],
+    "citations": [],
+    "proposed_memory_updates": [
+      {
+        "kind": "decision",
+        "statement": "Testing willingness to pay before a full launch."
+      }
+    ],
+    "limitations": [
+      "No external evidence was gathered or verified."
+    ],
+    "extra": 1
+  },
+  {
+    "decision_question": "Should Acme run a paid scheduling pilot with three clinics this quarter?",
+    "scope": "Pilot design and go/no-go for this quarter only; full launch is out of scope.",
+    "recommendation": {
+      "summary": "Run a small paid pilot with explicit exit criteria.",
+      "rationale": "It tests willingness to pay directly, at limited cost, and is reversible."
+    },
+    "criteria_and_tradeoffs": [
+      {
+        "criterion": "Learning speed",
+        "tradeoff": "Paid pilots learn faster about price but recruit fewer clinics."
+      }
+    ],
+    "key_assumptions": [
+      {
+        "statement": "Clinics feel the pain strongly enough to pay.",
+        "label": "hypothesis",
+        "confidence": "medium"
+      }
+    ],
+    "supporting_evidence": [
+      {
+        "point": "Three clinics have expressed interest.",
+        "label": "fact",
+        "source_ids": []
+      }
+    ],
+    "counterevidence": [
+      {
+        "point": "No price has been tested yet.",
+        "label": "fact",
+        "source_ids": []
+      }
+    ],
+    "strongest_objection": "Early adopters may overstate demand.",
+    "alternatives": [
+      {
+        "option": "Free pilot",
+        "why_not_now": "It would not test willingness to pay."
+      }
+    ],
+    "confidence": {
+      "level": "certain",
+      "explanation": "No external evidence was gathered; the recommendation rests on user-provided facts."
+    },
+    "what_would_change": [
+      "Two of three clinics declining the proposed price."
+    ],
+    "next_actions": [
+      {
+        "action": "Offer the pilot at the proposed price to all three clinics.",
+        "success_signal": "Two clinics sign within three weeks.",
+        "reversible": true
+      }
+    ],
+    "citations": [],
+    "proposed_memory_updates": [
+      {
+        "kind": "decision",
+        "statement": "Testing willingness to pay before a full launch."
+      }
+    ],
+    "limitations": [
+      "No external evidence was gathered or verified."
+    ]
+  },
+  {
+    "decision_question": "Should Acme run a paid scheduling pilot with three clinics this quarter?",
+    "scope": "Pilot design and go/no-go for this quarter only; full launch is out of scope.",
+    "recommendation": {
+      "summary": "Run a small paid pilot with explicit exit criteria.",
+      "rationale": "It tests willingness to pay directly, at limited cost, and is reversible."
+    },
+    "criteria_and_tradeoffs": [
+      {
+        "criterion": "Learning speed",
+        "tradeoff": "Paid pilots learn faster about price but recruit fewer clinics."
+      }
+    ],
+    "key_assumptions": [
+      {
+        "statement": "Clinics feel the pain strongly enough to pay.",
+        "label": "hypothesis",
+        "confidence": "medium"
+      }
+    ],
+    "supporting_evidence": [
+      {
+        "point": "Three clinics have expressed interest.",
+        "label": "fact",
+        "source_ids": []
+      }
+    ],
+    "counterevidence": [
+      {
+        "point": "No price has been tested yet.",
+        "label": "fact",
+        "source_ids": []
+      }
+    ],
+    "strongest_objection": "Early adopters may overstate demand.",
+    "alternatives": [],
+    "confidence": {
+      "level": "low",
+      "explanation": "No external evidence was gathered; the recommendation rests on user-provided facts."
+    },
+    "what_would_change": [
+      "Two of three clinics declining the proposed price."
+    ],
+    "next_actions": [
+      {
+        "action": "Offer the pilot at the proposed price to all three clinics.",
+        "success_signal": "Two clinics sign within three weeks.",
+        "reversible": true
+      }
+    ],
+    "citations": [],
+    "proposed_memory_updates": [
+      {
+        "kind": "decision",
+        "statement": "Testing willingness to pay before a full launch."
+      }
+    ],
+    "limitations": [
+      "No external evidence was gathered or verified."
+    ]
+  },
+  {
+    "decision_question": "Should Acme run a paid scheduling pilot with three clinics this quarter?",
+    "scope": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "recommendation": {
+      "summary": "Run a small paid pilot with explicit exit criteria.",
+      "rationale": "It tests willingness to pay directly, at limited cost, and is reversible."
+    },
+    "criteria_and_tradeoffs": [
+      {
+        "criterion": "Learning speed",
+        "tradeoff": "Paid pilots learn faster about price but recruit fewer clinics."
+      }
+    ],
+    "key_assumptions": [
+      {
+        "statement": "Clinics feel the pain strongly enough to pay.",
+        "label": "hypothesis",
+        "confidence": "medium"
+      }
+    ],
+    "supporting_evidence": [
+      {
+        "point": "Three clinics have expressed interest.",
+        "label": "fact",
+        "source_ids": []
+      }
+    ],
+    "counterevidence": [
+      {
+        "point": "No price has been tested yet.",
+        "label": "fact",
+        "source_ids": []
+      }
+    ],
+    "strongest_objection": "Early adopters may overstate demand.",
+    "alternatives": [
+      {
+        "option": "Free pilot",
+        "why_not_now": "It would not test willingness to pay."
+      }
+    ],
+    "confidence": {
+      "level": "low",
+      "explanation": "No external evidence was gathered; the recommendation rests on user-provided facts."
+    },
+    "what_would_change": [
+      "Two of three clinics declining the proposed price."
+    ],
+    "next_actions": [
+      {
+        "action": "Offer the pilot at the proposed price to all three clinics.",
+        "success_signal": "Two clinics sign within three weeks.",
+        "reversible": true
+      }
+    ],
+    "citations": [],
+    "proposed_memory_updates": [
+      {
+        "kind": "decision",
+        "statement": "Testing willingness to pay before a full launch."
+      }
+    ],
+    "limitations": [
+      "No external evidence was gathered or verified."
+    ]
+  },
+  {
+    "decision_question": "Should Acme run a paid scheduling pilot with three clinics this quarter?",
+    "scope": "   ",
+    "recommendation": {
+      "summary": "Run a small paid pilot with explicit exit criteria.",
+      "rationale": "It tests willingness to pay directly, at limited cost, and is reversible."
+    },
+    "criteria_and_tradeoffs": [
+      {
+        "criterion": "Learning speed",
+        "tradeoff": "Paid pilots learn faster about price but recruit fewer clinics."
+      }
+    ],
+    "key_assumptions": [
+      {
+        "statement": "Clinics feel the pain strongly enough to pay.",
+        "label": "hypothesis",
+        "confidence": "medium"
+      }
+    ],
+    "supporting_evidence": [
+      {
+        "point": "Three clinics have expressed interest.",
+        "label": "fact",
+        "source_ids": []
+      }
+    ],
+    "counterevidence": [
+      {
+        "point": "No price has been tested yet.",
+        "label": "fact",
+        "source_ids": []
+      }
+    ],
+    "strongest_objection": "Early adopters may overstate demand.",
+    "alternatives": [
+      {
+        "option": "Free pilot",
+        "why_not_now": "It would not test willingness to pay."
+      }
+    ],
+    "confidence": {
+      "level": "low",
+      "explanation": "No external evidence was gathered; the recommendation rests on user-provided facts."
+    },
+    "what_would_change": [
+      "Two of three clinics declining the proposed price."
+    ],
+    "next_actions": [
+      {
+        "action": "Offer the pilot at the proposed price to all three clinics.",
+        "success_signal": "Two clinics sign within three weeks.",
+        "reversible": true
+      }
+    ],
+    "citations": [],
+    "proposed_memory_updates": [
+      {
+        "kind": "decision",
+        "statement": "Testing willingness to pay before a full launch."
+      }
+    ],
+    "limitations": [
+      "No external evidence was gathered or verified."
+    ]
+  },
+  {
+    "decision_question": "Should Acme run a paid scheduling pilot with three clinics this quarter?",
+    "scope": "Pilot design and go/no-go for this quarter only; full launch is out of scope.",
+    "recommendation": {
+      "summary": "Run a small paid pilot with explicit exit criteria.",
+      "rationale": "It tests willingness to pay directly, at limited cost, and is reversible."
+    },
+    "criteria_and_tradeoffs": [
+      {
+        "criterion": "Learning speed",
+        "tradeoff": "Paid pilots learn faster about price but recruit fewer clinics."
+      }
+    ],
+    "key_assumptions": [
+      {
+        "statement": "Clinics feel the pain strongly enough to pay.",
+        "label": "certain",
+        "confidence": "medium"
+      }
+    ],
+    "supporting_evidence": [
+      {
+        "point": "Three clinics have expressed interest.",
+        "label": "fact",
+        "source_ids": []
+      }
+    ],
+    "counterevidence": [
+      {
+        "point": "No price has been tested yet.",
+        "label": "fact",
+        "source_ids": []
+      }
+    ],
+    "strongest_objection": "Early adopters may overstate demand.",
+    "alternatives": [
+      {
+        "option": "Free pilot",
+        "why_not_now": "It would not test willingness to pay."
+      }
+    ],
+    "confidence": {
+      "level": "low",
+      "explanation": "No external evidence was gathered; the recommendation rests on user-provided facts."
+    },
+    "what_would_change": [
+      "Two of three clinics declining the proposed price."
+    ],
+    "next_actions": [
+      {
+        "action": "Offer the pilot at the proposed price to all three clinics.",
+        "success_signal": "Two clinics sign within three weeks.",
+        "reversible": true
+      }
+    ],
+    "citations": [],
+    "proposed_memory_updates": [
+      {
+        "kind": "decision",
+        "statement": "Testing willingness to pay before a full launch."
+      }
+    ],
+    "limitations": [
+      "No external evidence was gathered or verified."
+    ]
+  }
+]

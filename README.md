@@ -1,17 +1,19 @@
-# Echiche (starter, milestone M3)
+# Echiche (starter, milestone M4)
 
-**Version:** 0.3.0 · **Stage:** M3 "Durable run orchestration" done; next is M4 (provider adapter and prompt registry).
+**Version:** 0.4.0 · **Stage:** M4 "Model provider and prompt registry" implemented (ADR-007 awaiting approval); next is M5 (research with provenance).
 
 > **Not production-ready yet.** Already in place:
 > - sign-in, per-user isolation (app checks plus row-level security), and CSRF/size/rate limits (M2);
-> - durable background runs in the Python worker, with checkpoints, leases, retries, cancellation and budgets (M3).
+> - durable background runs in the Python worker, with checkpoints, leases, retries, cancellation and budgets (M3);
+> - an OpenAI-backed decision brief behind a versioned prompt registry, with strict structured outputs, spend caps and call telemetry (M4). It is **off by default**: the worker runs in demo mode until you set a key ([enabling live reasoning](docs/runbooks/render-deploy.md#enabling-live-reasoning-openai-adr-007)).
 >
-> Still missing before real users: an evaluated AI provider (M4+), research provenance (M5), export/delete in the app (M6), and the release gates in [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md).
+> Still missing before real users: evaluation of the model output (M7), research provenance (M5), export/delete in the app (M6), and the release gates in [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md).
 
 ## Architecture
 
 - **`/` (Next.js 15, TypeScript):** UI, API, authentication and authorization ([ADR-004](docs/decisions/004-auth-and-tenancy.md)).
-- **`worker/` (Python 3.12):** owns run execution ([ADR-001](docs/decisions/001-language-and-service-boundary.md), [ADR-006](docs/decisions/006-durable-run-orchestration.md)). It claims queued runs from Postgres and runs the five stages durably.
+- **`worker/` (Python 3.12):** owns run execution ([ADR-001](docs/decisions/001-language-and-service-boundary.md), [ADR-006](docs/decisions/006-durable-run-orchestration.md)). It claims queued runs from Postgres and runs the five stages durably. It is the only component that calls a model ([ADR-007](docs/decisions/007-model-provider-and-prompt-registry.md)).
+- **`prompts/runtime/`:** the versioned prompt registry the worker loads (TOML frontmatter, trusted instructions only).
 - **`supabase/`:** Supabase CLI config and SQL migrations, the single source of schema truth ([ADR-002](docs/decisions/002-migration-tooling.md)).
 - **`contracts/`:** versioned JSON Schemas shared by both services. Pydantic is the source; the TypeScript mirror is checked against it in CI.
 - **Hosting:** Render, Frankfurt: web service plus Background Worker ([ADR-005](docs/decisions/005-hosting.md), `render.yaml`).
@@ -23,7 +25,9 @@ How a run flows:
 2. The worker claims it, works through planning → research → critique → verification → synthesis, and saves a checkpoint after each stage.
 3. The run ends at **awaiting review**. The UI polls for progress, and the user accepts, cancels, or approves more budget.
 
-The reasoning is still the deterministic, **non-LLM** scaffold, and the UI says so.
+Two reasoning modes, and the UI labels every result with the mode that produced it (from call telemetry):
+- **Demo mode** (`REASONING_PROVIDER=deterministic`, the default): the deterministic, non-LLM scaffold.
+- **Live model** (`openai`): framing → critique → decision brief. The brief carries a recommendation, trade-offs, labelled assumptions, the strongest objection, alternatives, calibrated confidence, what would change the decision, and next actions. No research is performed yet, so it cites no sources and says so.
 
 ## Requirements
 
@@ -64,12 +68,14 @@ Useful commands: `npm run db:reset` (recreate and re-migrate), `npm run db:new-m
 | `SUPABASE_PUBLISHABLE_KEY` | always | Publishable/anon key. Secret or service-role keys are rejected. |
 | `APP_ORIGIN` | production | Exact https origin; used for CSRF checks and auth redirects |
 | `PROJECT_CREATE_LIMIT_PER_HOUR`, `RUN_CREATE_LIMIT_PER_HOUR` | no | Per-user caps, default 30 / 20 |
-| `RUN_BUDGET_MAX_STEPS` / `_ACTIVE_SECONDS` / `_RESEARCH_CALLS` / `_COST_USD` | no | Per-run caps, default 18 / 600 / 8 / 0.50 |
+| `RUN_BUDGET_MAX_STEPS` / `_ACTIVE_SECONDS` / `_RESEARCH_CALLS` / `_COST_USD` | no | Per-run caps, default 18 / 600 / 8 / 0.50. The cost cap is enforced before every model call (worst case). |
+
+`OPENAI_API_KEY` is **refused** in the web environment: only the worker may hold it.
 
 Worker variables are in [`worker/README.md`](worker/README.md).
 
 The server validates configuration at start-up:
-- **Production:** it exits on any problem, including `SUPABASE_SERVICE_ROLE_KEY` being present at all.
+- **Production:** it exits on any problem, including `SUPABASE_SERVICE_ROLE_KEY` or `OPENAI_API_KEY` being present at all.
 - **Development:** it keeps serving, and API calls return `503 CONFIG_INVALID`.
 
 Hosted setup:
@@ -85,7 +91,8 @@ Hosted setup:
 | `npm run typecheck` · `npm run lint` · `npm test` | Static checks; unit tests (no database, no network) |
 | `npm run test:db:prepare` | Prepares a **disposable** database from `TEST_ADMIN_DATABASE_URL`: adds a test-only Supabase shim if needed, applies migrations via the Supabase CLI, sets test role passwords |
 | `npm run test:integration` | Repository and RLS tests as the real runtime role, plus the cross-language E2E (web queues → Python worker runs → web reads). Needs `DATABASE_URL` (echiche_web), `WORKER_TEST_DATABASE_URL` (echiche_worker) and `TEST_ADMIN_DATABASE_URL`. Truncates data, so disposable databases only. |
-| `cd worker && uv run pytest -m integration` | Worker durability: crash/resume, concurrent claims, leases, cancellation, budgets, timeouts, state-machine enforcement |
+| `cd worker && uv run pytest -m integration` | Worker durability (crash/resume, concurrent claims, leases, cancellation, budgets, timeouts, state machine) and the model pipeline with a scripted model (briefs, telemetry, spend caps, repair, RLS on `model_calls`) |
+| `cd worker && ECHICHE_LIVE_OPENAI=1 OPENAI_API_KEY=… uv run pytest -m live -s` | **Real, billed** single OpenAI call (< $0.05). Opt-in only; never in CI. |
 
 CI (`.github/workflows/ci.yml`) has four jobs:
 
@@ -109,7 +116,7 @@ Every route except `/api/health` and `/api/ready` requires a signed-in session (
 | `PATCH /api/projects/:id` | Any of `{ title, problemStatement, archived }`; `archived:true` archives (idempotent) |
 | `GET /api/projects/:id/runs` | Runs (≤50) |
 | `POST /api/projects/:id/runs` | `{ prompt }` → **202** queued run plus `Location`. Optional `Idempotency-Key` header: a same-request replay returns 200; a different body returns 409. |
-| `GET /api/runs/:id` | Run (status, completed stages, budget, usage, error code) plus events. Poll this. |
+| `GET /api/runs/:id` | Run (status, completed stages, budget, usage, error code, `result` tagged with its `schemaVersion`, `generation` summary: mode, provider, models, prompt versions, calls, tokens, cost) plus events. Poll this. |
 | `POST /api/runs/:id/cancel` | Queued or paused: cancelled now. Active: stops at the next stage. Idempotent. |
 | `POST /api/runs/:id/accept` | awaiting review → completed |
 | `POST /api/runs/:id/resume` | Budget-paused → queued, raising the caps (the user's explicit approval) |
@@ -151,17 +158,18 @@ src/lib/server/         config, auth, HTTP guards, logging, owner-scoped stores,
 src/test/               integration setup, test DB helpers, plain-Postgres shim
 scripts/                test DB preparation; CI auth-revocation check
 supabase/               CLI config.toml and migrations
-worker/                 Python worker (claim loop, executor, store, contracts) + Dockerfile
+worker/                 Python worker (claim loop, executor, store, contracts, prompt registry, OpenAI adapter) + Dockerfile
+prompts/runtime/        versioned runtime prompts (registry format; ADR-007)
 contracts/              JSON Schemas + shared fixtures
 render.yaml             Render Blueprint (Frankfurt)
-docs/decisions/         ADRs 001–006
+docs/decisions/         ADRs 001–007
 docs/runbooks/          Supabase setup, Render deploy, run operations
 docs/security/          data lifecycle: storage, export, deletion, retention
 ```
 
 ## Gates still open before real users
 
-1. Provider adapter with token/time/search/spend caps **[M4]**
+1. ~~Provider adapter with token/time/spend caps~~ **[M4, done; ADR-007 approval pending]**; output-quality evaluation **[M7]**
 2. Claim/source provenance before web research **[M5]**
 3. In-app export and delete; retention decisions ([data lifecycle](docs/security/data-lifecycle.md)) **[M6]**
 4. Custom SMTP, sign-up policy and other hosted Auth settings ([runbook](docs/runbooks/supabase-setup.md)) **[before pilot]**

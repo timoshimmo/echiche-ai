@@ -1,0 +1,23 @@
+{
+  "strongest_objection": "Three interested clinics may be friendly early adopters, so a paid pilot could overstate demand.",
+  "challenged_assumptions": [
+    {
+      "assumption": "Clinics will pay.",
+      "challenge": "Interest is not payment; no price has been tested.",
+      "severity": "high"
+    }
+  ],
+  "alternative_explanations": [
+    "Interest reflects curiosity rather than a budgeted need."
+  ],
+  "missing_evidence": [
+    "Any signed letter of intent or price anchor."
+  ],
+  "risks": [
+    {
+      "risk": "A failed pilot damages references in a small market.",
+      "severity": "medium",
+      "reversibility": "partly_reversible"
+    }
+  ]
+}
