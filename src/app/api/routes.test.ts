@@ -296,6 +296,8 @@ describe("asynchronous runs (M3)", () => {
     const run = (await response.json()).data;
     expect(response.headers.get("location")).toBe(`/api/runs/${run.id}`);
     expect(run).toMatchObject({ status: "queued", result: null, completedStages: [], budget: { maxSteps: 18, maxActiveSeconds: 600 } });
+    const fetched = await (await getRun(get(), params({ runId: run.id }))).json();
+    expect(fetched.data.evidence).toEqual({ sources: [], claims: [] });
     expect(run.generation).toEqual({
       mode: "demo", providers: [], models: [], prompts: [], calls: 0, repairs: 0, inputTokens: 0, outputTokens: 0, costUsd: 0
     });
@@ -358,5 +360,24 @@ describe("asynchronous runs (M3)", () => {
     const evil = await cancelRun(req("/", { headers: { origin: "https://evil.example" } }), params({ runId: run.id }));
     expect(evil.status).toBe(403);
     expect(store.runs.get(run.id)?.status).toBe("queued");
+  });
+});
+
+describe("research evidence (M5)", () => {
+  it("returns a run's sources and claims to its owner only", async () => {
+    as(ALICE);
+    const project = (await (await createProject(req("/", { body: { title: "Evidence", problemStatement: "Evidence visibility check." } }))).json()).data;
+    const run = (await (await startRun(req("/", { body: { prompt: "Which pricing should we test?" } }), params({ projectId: project.id }))).json()).data;
+    store.evidence.set(run.id, {
+      sources: [{
+        sourceId: "S1", url: "https://survey.example/r", domain: "survey.example", title: "Survey", publisher: null,
+        publishedAt: null, retrievedAt: "2026-10-28T10:00:00Z", passages: [{ passage_id: "S1.p1", text: "Clinics pay." }]
+      }],
+      claims: []
+    });
+    const mine = (await (await getRun(get(), params({ runId: run.id }))).json()).data;
+    expect(mine.evidence.sources[0].url).toBe("https://survey.example/r");
+    as(BOB);
+    expect((await getRun(get(), params({ runId: run.id }))).status).toBe(404);
   });
 });

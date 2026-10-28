@@ -1,5 +1,5 @@
 import type {
-  CreateProjectInput, Project, RunBudget, RunEvent, StartRunInput, ThoughtRun, UpdateProjectInput
+  CreateProjectInput, Project, RunBudget, RunEvent, RunEvidence, StartRunInput, ThoughtRun, UpdateProjectInput
 } from "@/lib/domain/types";
 
 /**
@@ -30,6 +30,8 @@ export interface OwnerScopedRepository {
   listRuns(projectId: string): Promise<ThoughtRun[]>;
   /** Events in sequence order. */
   listEvents(runId: string): Promise<RunEvent[]>;
+  /** Sources the worker read and the claims verified against them (empty lists when none). */
+  getEvidence(runId: string): Promise<RunEvidence>;
   /**
    * Idempotent. queued/paused → cancelled immediately; active → cancel requested (the worker
    * stops between stages); already cancelled → unchanged. Throws RunStateError for runs that

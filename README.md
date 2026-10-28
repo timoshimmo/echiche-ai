@@ -1,18 +1,19 @@
-# Echiche (starter, milestone M4)
+# Echiche (starter, milestone M5)
 
-**Version:** 0.4.0 · **Stage:** M4 "Model provider and prompt registry" implemented (ADR-007 accepted); next is M5 (research with provenance).
+**Version:** 0.5.0 · **Stage:** M5 "Research, evidence and verification" implemented (ADR-008 accepted); next is M6 (memory and decision journal).
 
 > **Not production-ready yet.** Already in place:
 > - sign-in, per-user isolation (app checks plus row-level security), and CSRF/size/rate limits (M2);
 > - durable background runs in the Python worker, with checkpoints, leases, retries, cancellation and budgets (M3);
-> - an OpenAI-backed decision brief behind a versioned prompt registry, with strict structured outputs, spend caps and call telemetry (M4). It is **off by default**: the worker runs in demo mode until you set a key ([enabling live reasoning](docs/runbooks/render-deploy.md#enabling-live-reasoning-openai-adr-007)).
+> - an OpenAI-backed decision brief behind a versioned prompt registry, with strict structured outputs, spend caps and call telemetry (M4). It is **off by default**: the worker runs in demo mode until you set a key ([enabling live reasoning](docs/runbooks/render-deploy.md#enabling-live-reasoning-openai-adr-007));
+> - web research with provenance (M5): Brave finds pages, the worker reads them itself, and claims are tied to exact quotes and checked independently. Every citation links to a stored source and passage. Also **off by default** ([enabling research](docs/runbooks/render-deploy.md#enabling-research-brave-adr-008)).
 >
-> Still missing before real users: evaluation of the model output (M7), research provenance (M5), export/delete in the app (M6), and the release gates in [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md).
+> Still missing before real users: evaluation of the model output (M7), export/delete in the app (M6), and the release gates in [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md).
 
 ## Architecture
 
 - **`/` (Next.js 15, TypeScript):** UI, API, authentication and authorization ([ADR-004](docs/decisions/004-auth-and-tenancy.md)).
-- **`worker/` (Python 3.12):** owns run execution ([ADR-001](docs/decisions/001-language-and-service-boundary.md), [ADR-006](docs/decisions/006-durable-run-orchestration.md)). It claims queued runs from Postgres and runs the five stages durably. It is the only component that calls a model ([ADR-007](docs/decisions/007-model-provider-and-prompt-registry.md)).
+- **`worker/` (Python 3.12):** owns run execution ([ADR-001](docs/decisions/001-language-and-service-boundary.md), [ADR-006](docs/decisions/006-durable-run-orchestration.md)). It claims queued runs from Postgres and runs the five stages durably. It is the only component that calls a model or the web ([ADR-007](docs/decisions/007-model-provider-and-prompt-registry.md), [ADR-008](docs/decisions/008-research-provenance-and-verification.md)).
 - **`prompts/runtime/`:** the versioned prompt registry the worker loads (TOML frontmatter, trusted instructions only).
 - **`supabase/`:** Supabase CLI config and SQL migrations, the single source of schema truth ([ADR-002](docs/decisions/002-migration-tooling.md)).
 - **`contracts/`:** versioned JSON Schemas shared by both services. Pydantic is the source; the TypeScript mirror is checked against it in CI.
@@ -27,7 +28,13 @@ How a run flows:
 
 Two reasoning modes, and the UI labels every result with the mode that produced it (from call telemetry):
 - **Demo mode** (`REASONING_PROVIDER=deterministic`, the default): the deterministic, non-LLM scaffold.
-- **Live model** (`openai`): framing → critique → decision brief. The brief carries a recommendation, trade-offs, labelled assumptions, the strongest objection, alternatives, calibrated confidence, what would change the decision, and next actions. No research is performed yet, so it cites no sources and says so.
+- **Live model** (`openai`): framing → research → critique → claim verification → decision brief. The brief carries a recommendation, trade-offs, labelled assumptions, the strongest objection, alternatives, calibrated confidence, what would change the decision, and next actions.
+- **Research** (`RESEARCH_PROVIDER=brave`, requires the live model):
+  - The model plans a few searches (bounded by the run's search budget). Brave returns candidate URLs; search results themselves are never stored.
+  - The worker fetches the pages itself (https only, public addresses only, robots.txt and `noarchive`/`noai` honoured, size and time limits) and keeps short passages.
+  - The model extracts claims with exact quotes. Each quote is checked against the passage text, then an independent model pass judges support.
+  - The brief may cite only sources behind verified claims, and "high" confidence needs two independent domains.
+  - With no usable evidence, the brief says research was insufficient and cites nothing.
 
 ## Requirements
 
@@ -93,6 +100,7 @@ Hosted setup:
 | `npm run test:integration` | Repository and RLS tests as the real runtime role, plus the cross-language E2E (web queues → Python worker runs → web reads). Needs `DATABASE_URL` (echiche_web), `WORKER_TEST_DATABASE_URL` (echiche_worker) and `TEST_ADMIN_DATABASE_URL`. Truncates data, so disposable databases only. |
 | `cd worker && uv run pytest -m integration` | Worker durability (crash/resume, concurrent claims, leases, cancellation, budgets, timeouts, state machine) and the model pipeline with a scripted model (briefs, telemetry, spend caps, repair, RLS on `model_calls`) |
 | `cd worker && ECHICHE_LIVE_OPENAI=1 OPENAI_API_KEY=… uv run pytest -m live -s` | **Real, billed** single OpenAI call (< $0.05). Opt-in only; never in CI. |
+| `cd worker && ECHICHE_LIVE_BRAVE=1 BRAVE_SEARCH_API_KEY=… uv run pytest -m live -s -k research` | **Real** single Brave search ($0.005) plus page fetches through the production guards. Opt-in only. |
 
 CI (`.github/workflows/ci.yml`) has four jobs:
 
@@ -116,7 +124,7 @@ Every route except `/api/health` and `/api/ready` requires a signed-in session (
 | `PATCH /api/projects/:id` | Any of `{ title, problemStatement, archived }`; `archived:true` archives (idempotent) |
 | `GET /api/projects/:id/runs` | Runs (≤50) |
 | `POST /api/projects/:id/runs` | `{ prompt }` → **202** queued run plus `Location`. Optional `Idempotency-Key` header: a same-request replay returns 200; a different body returns 409. |
-| `GET /api/runs/:id` | Run (status, completed stages, budget, usage, error code, `result` tagged with its `schemaVersion`, `generation` summary: mode, provider, models, prompt versions, calls, tokens, cost) plus events. Poll this. |
+| `GET /api/runs/:id` | Run (status, completed stages, budget, usage, error code, `result` tagged with its `schemaVersion`, `generation` summary: mode, provider, models, prompt versions, calls, tokens, cost) plus events and `evidence` (sources read, with passages, and claims with their quotes and verdicts). Poll this. |
 | `POST /api/runs/:id/cancel` | Queued or paused: cancelled now. Active: stops at the next stage. Idempotent. |
 | `POST /api/runs/:id/accept` | awaiting review → completed |
 | `POST /api/runs/:id/resume` | Budget-paused → queued, raising the caps (the user's explicit approval) |
@@ -158,11 +166,12 @@ src/lib/server/         config, auth, HTTP guards, logging, owner-scoped stores,
 src/test/               integration setup, test DB helpers, plain-Postgres shim
 scripts/                test DB preparation; CI auth-revocation check
 supabase/               CLI config.toml and migrations
-worker/                 Python worker (claim loop, executor, store, contracts, prompt registry, OpenAI adapter) + Dockerfile
+worker/                 Python worker (claim loop, executor, store, contracts, prompt registry, OpenAI adapter,
+                        Brave adapter, safe page fetcher, research and verification pipeline) + Dockerfile
 prompts/runtime/        versioned runtime prompts (registry format; ADR-007)
 contracts/              JSON Schemas + shared fixtures
 render.yaml             Render Blueprint (Frankfurt)
-docs/decisions/         ADRs 001–007
+docs/decisions/         ADRs 001–008
 docs/runbooks/          Supabase setup, Render deploy, run operations
 docs/security/          data lifecycle: storage, export, deletion, retention
 ```
@@ -170,7 +179,7 @@ docs/security/          data lifecycle: storage, export, deletion, retention
 ## Gates still open before real users
 
 1. ~~Provider adapter with token/time/spend caps~~ **[M4, done; ADR-007 accepted]**; output-quality evaluation **[M7]**
-2. Claim/source provenance before web research **[M5]**
+2. ~~Claim/source provenance before web research~~ **[M5, done]**; Brave's written confirmation on result use and excerpt storage **[before enabling research for real users]**
 3. In-app export and delete; retention decisions ([data lifecycle](docs/security/data-lifecycle.md)) **[M6]**
 4. Custom SMTP, sign-up policy and other hosted Auth settings ([runbook](docs/runbooks/supabase-setup.md)) **[before pilot]**
 5. Playwright E2E, security review, backup/restore test, monitoring and alerting on worker heartbeats **[M8]**

@@ -136,3 +136,48 @@ def test_unknown_model_fails_at_start_up_with_exit_code_2(
     monkeypatch.setenv("OPENAI_MODEL", "gpt-6-luna")
     assert main(["--check-config"]) == 0
     assert "openai:gpt-6-luna" in capsys.readouterr().out
+
+
+# --- research (M5) -----------------------------------------------------------------------------
+
+BRAVE = "brave-test-placeholder-not-real"
+
+
+def test_research_is_off_by_default_with_bounded_limits() -> None:
+    config = parse_worker_config({"DATABASE_URL": URL_OK})
+    assert config.research_provider == "none" and config.brave_api_key is None
+    assert (config.research_max_queries, config.research_results_per_query, config.research_max_pages) == (3, 5, 6)
+    assert config.fetch_timeout_seconds == 8 and config.fetch_max_bytes == 2_000_000
+
+
+def test_brave_needs_a_key_and_the_model_provider() -> None:
+    issues = issues_of({"DATABASE_URL": URL_OK, "RESEARCH_PROVIDER": "brave"})
+    assert any("BRAVE_SEARCH_API_KEY is required" in i for i in issues)
+    assert any("requires REASONING_PROVIDER=openai" in i for i in issues)
+    bad = issues_of(
+        {"DATABASE_URL": URL_OK, "RESEARCH_PROVIDER": "brave", "BRAVE_SEARCH_API_KEY": BRAVE,
+         "REASONING_PROVIDER": "openai", "OPENAI_API_KEY": KEY, "RESEARCH_MAX_QUERIES": "50",
+         "RESEARCH_MAX_PAGES": "0", "FETCH_TIMEOUT_SECONDS": "120"}
+    )  # fmt: skip
+    assert len(bad) == 3 and not any(BRAVE in i for i in bad)
+
+
+def test_repr_hides_brave_key() -> None:
+    config = parse_worker_config(
+        {"DATABASE_URL": URL_OK, "RESEARCH_PROVIDER": "brave", "BRAVE_SEARCH_API_KEY": BRAVE,
+         "REASONING_PROVIDER": "openai", "OPENAI_API_KEY": KEY}
+    )  # fmt: skip
+    assert BRAVE not in repr(config) and "brave_api_key=***" in repr(config)
+
+
+def test_check_config_builds_the_research_pipeline(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    for name, value in {
+        "DATABASE_URL": URL_OK, "REASONING_PROVIDER": "openai", "OPENAI_API_KEY": KEY,
+        "RESEARCH_PROVIDER": "brave", "BRAVE_SEARCH_API_KEY": BRAVE,
+    }.items():  # fmt: skip
+        monkeypatch.setenv(name, value)
+    assert main(["--check-config"]) == 0
+    out = capsys.readouterr().out
+    assert "openai:gpt-6.1-sol+brave" in out and BRAVE not in out

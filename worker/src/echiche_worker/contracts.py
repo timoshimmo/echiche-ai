@@ -205,14 +205,166 @@ class DecisionBriefV1(_Strict):
     limitations: list[Medium] = Field(max_length=10)
 
 
+# --- Research and verification (M5, ADR-008) ------------------------------------------
+#
+# IDs are assigned by the application, never by the model: sources are S1..Sn and passages
+# S<n>.p<m> in the order they were read; claims are C1..Cn as extracted. The model may only
+# refer to IDs it was given; every reference is checked deterministically.
+
+SourceId = Annotated[str, Field(pattern=r"^S[0-9]{1,3}$")]
+PassageId = Annotated[str, Field(pattern=r"^S[0-9]{1,3}\.p[0-9]{1,2}$")]
+ClaimId = Annotated[str, Field(pattern=r"^C[0-9]{1,3}$")]
+Relation = Literal["supports", "contradicts", "context"]
+
+
+class ResearchQueryV1(_Strict):
+    query: Short
+    research_question: Medium
+    rationale: Medium
+
+
+class ResearchPlanV1(_Strict):
+    """Model output: bounded search queries. The application enforces the actual limit."""
+
+    queries: list[ResearchQueryV1] = Field(max_length=8)
+    skipped_questions: list[Medium] = Field(max_length=8)
+
+
+class ClaimEvidenceV1(_Strict):
+    passage_id: PassageId
+    relation: Relation
+    quote: Medium  # must be an exact (whitespace-normalised) substring of the passage
+
+
+class ExtractedClaimV1(_Strict):
+    claim_id: ClaimId
+    text: Medium
+    label: EpistemicLabel
+    evidence: list[ClaimEvidenceV1] = Field(min_length=1, max_length=3)
+
+
+class ClaimSetV1(_Strict):
+    """Model output: decision-relevant claims, each tied to exact quotes from supplied passages."""
+
+    claims: list[ExtractedClaimV1] = Field(max_length=15)
+    gaps: list[Medium] = Field(max_length=8)
+
+
+class ClaimJudgmentV1(_Strict):
+    claim_id: ClaimId
+    passage_id: PassageId
+    verdict: Literal["supported", "partially_supported", "not_supported"]
+    note: Medium
+
+
+class ClaimVerificationV1(_Strict):
+    """Model output from the independent verifier: one judgment per (claim, passage) pair."""
+
+    judgments: list[ClaimJudgmentV1] = Field(max_length=45)
+
+
+# Application-built payloads (checkpoint data; never produced by a model).
+
+
+class PassageV1(_Strict):
+    passage_id: str = Field(pattern=r"^S[0-9]{1,3}\.p[0-9]{1,2}$")
+    text: str = Field(min_length=1, max_length=600)
+
+
+class SourceRecordV1(_Strict):
+    source_id: str = Field(pattern=r"^S[0-9]{1,3}$")
+    url: str = Field(pattern=r"^https://", max_length=2048)
+    domain: str = Field(min_length=1, max_length=253)
+    title: str = Field(min_length=1, max_length=300)
+    publisher: str | None = Field(max_length=200)
+    published_at: str | None  # ISO 8601 date or datetime as declared by the page; None if unknown
+    retrieved_at: str  # ISO 8601 UTC
+    content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    search_query: str = Field(max_length=400)
+    passages: list[PassageV1] = Field(min_length=1, max_length=3)
+
+
+class SkippedSourceV1(_Strict):
+    domain: str = Field(max_length=253)
+    status: Literal[
+        "blocked_robots",
+        "blocked_publisher",
+        "blocked_address",
+        "unsupported_url",
+        "unsupported_type",
+        "too_large",
+        "http_error",
+        "timeout",
+        "fetch_error",
+        "no_text",
+        "duplicate",
+        "irrelevant",
+        "not_attempted",
+    ]
+
+
+class SearchSummaryV1(_Strict):
+    query: str = Field(max_length=400)
+    status: Literal["ok", "no_results", "failed"]
+    result_count: int = Field(ge=0)
+
+
+class EvidenceSetV1(_Strict):
+    provider: str
+    searches: list[SearchSummaryV1] = Field(max_length=8)
+    sources: list[SourceRecordV1] = Field(max_length=12)
+    skipped: list[SkippedSourceV1] = Field(max_length=100)
+    limitations: list[str] = Field(max_length=10)
+
+
+class VerifiedEvidenceV1(_Strict):
+    source_id: str
+    passage_id: str
+    relation: Relation
+    quote: str
+    verdict: Literal["supported", "partially_supported", "not_supported", "quote_not_found"]
+    note: str
+
+
+class VerifiedClaimV1(_Strict):
+    claim_id: str
+    text: str
+    label: EpistemicLabel
+    status: Literal["verified", "partial", "unsupported", "invalid"]
+    freshness: Literal["fresh", "stale", "unknown"]
+    evidence: list[VerifiedEvidenceV1]
+
+
+class VerificationReportV1(_Strict):
+    claims: list[VerifiedClaimV1] = Field(max_length=15)
+    contradictions: list[str] = Field(max_length=15)  # claim IDs with both support and contradiction
+    unverifiable: list[str] = Field(max_length=20)
+    limitations: list[str] = Field(max_length=10)
+
+
 DECISION_FRAME_SCHEMA_VERSION = "decision-frame.v1"
 CRITIQUE_SCHEMA_VERSION = "critique.v1"
 DECISION_BRIEF_SCHEMA_VERSION = "decision-brief.v1"
+RESEARCH_PLAN_SCHEMA_VERSION = "research-plan.v1"
+CLAIM_SET_SCHEMA_VERSION = "claim-set.v1"
+CLAIM_VERIFICATION_SCHEMA_VERSION = "claim-verification.v1"
+EVIDENCE_SET_SCHEMA_VERSION = "evidence-set.v1"
+VERIFICATION_REPORT_SCHEMA_VERSION = "verification-report.v1"
 
 MODEL_OUTPUTS: dict[str, type[BaseModel]] = {
     DECISION_FRAME_SCHEMA_VERSION: DecisionFrameV1,
     CRITIQUE_SCHEMA_VERSION: CritiqueV1,
     DECISION_BRIEF_SCHEMA_VERSION: DecisionBriefV1,
+    RESEARCH_PLAN_SCHEMA_VERSION: ResearchPlanV1,
+    CLAIM_SET_SCHEMA_VERSION: ClaimSetV1,
+    CLAIM_VERIFICATION_SCHEMA_VERSION: ClaimVerificationV1,
+}
+
+# Checkpoint payloads the application builds itself (stage-output.v2 `data`).
+STAGE_DATA: dict[str, type[BaseModel]] = {
+    **MODEL_OUTPUTS,
+    EVIDENCE_SET_SCHEMA_VERSION: EvidenceSetV1,
+    VERIFICATION_REPORT_SCHEMA_VERSION: VerificationReportV1,
 }
 
 
@@ -222,7 +374,7 @@ CONTRACTS: dict[str, type[BaseModel]] = {
     RESULT_SCHEMA_VERSION: ReasoningScaffoldResultV1,
     STAGE_OUTPUT_SCHEMA_VERSION: StageOutputV1,
     STAGE_OUTPUT_V2_SCHEMA_VERSION: StageOutputV2,
-    **MODEL_OUTPUTS,
+    **STAGE_DATA,
 }
 
 

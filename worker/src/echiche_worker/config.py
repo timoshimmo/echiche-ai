@@ -18,6 +18,7 @@ OPENAI_RESIDENCIES = ("global", "eu")
 DEFAULT_OPENAI_MODEL = "gpt-6.1-sol"
 # Same set the pinned SDK accepts; not every model supports every value (OpenAI reasoning guide).
 OPENAI_REASONING_EFFORTS = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
+RESEARCH_PROVIDERS = ("none", "brave")
 
 
 class ConfigError(Exception):
@@ -43,6 +44,14 @@ class WorkerConfig:
     openai_reasoning_effort: str | None = None
     openai_data_residency: str = "global"
     openai_max_output_tokens: int = 4000
+    research_provider: str = "none"
+    brave_api_key: str | None = None
+    research_max_queries: int = 3
+    research_results_per_query: int = 5
+    research_max_pages: int = 6
+    fetch_timeout_seconds: float = 8.0
+    fetch_max_bytes: int = 2_000_000
+    research_stale_days: int = 730
 
     def __repr__(self) -> str:  # never print the connection string or API key
         return (
@@ -52,7 +61,14 @@ class WorkerConfig:
             f"openai_api_key={'***' if self.openai_api_key else None}, openai_model={self.openai_model!r}, "
             f"openai_reasoning_effort={self.openai_reasoning_effort!r}, "
             f"openai_data_residency={self.openai_data_residency!r}, "
-            f"openai_max_output_tokens={self.openai_max_output_tokens})"
+            f"openai_max_output_tokens={self.openai_max_output_tokens}, "
+            f"research_provider={self.research_provider!r}, "
+            f"brave_api_key={'***' if self.brave_api_key else None}, "
+            f"research_max_queries={self.research_max_queries}, "
+            f"research_results_per_query={self.research_results_per_query}, "
+            f"research_max_pages={self.research_max_pages}, "
+            f"fetch_timeout_seconds={self.fetch_timeout_seconds}, fetch_max_bytes={self.fetch_max_bytes}, "
+            f"research_stale_days={self.research_stale_days})"
         )
 
     __str__ = __repr__
@@ -121,6 +137,24 @@ def parse_worker_config(env: Mapping[str, str]) -> WorkerConfig:
         if not float(max_output).is_integer():
             issues.append("OPENAI_MAX_OUTPUT_TOKENS must be a whole number")
 
+    research = (_blank_to_none(env.get("RESEARCH_PROVIDER")) or "none").lower()
+    brave_key = _blank_to_none(env.get("BRAVE_SEARCH_API_KEY"))
+    max_queries = _number(env, "RESEARCH_MAX_QUERIES", "3", 1, 8, issues)
+    per_query = _number(env, "RESEARCH_RESULTS_PER_QUERY", "5", 1, 20, issues)
+    max_pages = _number(env, "RESEARCH_MAX_PAGES", "6", 1, 12, issues)
+    fetch_timeout = _number(env, "FETCH_TIMEOUT_SECONDS", "8", 1, 30, issues)
+    fetch_bytes = _number(env, "FETCH_MAX_BYTES", "2000000", 10_000, 10_000_000, issues)
+    stale_days = _number(env, "RESEARCH_STALE_DAYS", "730", 1, 36_500, issues)
+    if research not in RESEARCH_PROVIDERS:
+        issues.append(f"RESEARCH_PROVIDER must be one of {', '.join(RESEARCH_PROVIDERS)}")
+    if research == "brave":
+        if brave_key is None:
+            issues.append("BRAVE_SEARCH_API_KEY is required when RESEARCH_PROVIDER=brave")
+        if provider != "openai":
+            issues.append(
+                "RESEARCH_PROVIDER=brave requires REASONING_PROVIDER=openai (planning and verification use the model)"
+            )
+
     if issues or database_url is None:
         raise ConfigError(issues)
     return WorkerConfig(
@@ -135,4 +169,12 @@ def parse_worker_config(env: Mapping[str, str]) -> WorkerConfig:
         openai_reasoning_effort=effort,
         openai_data_residency=residency,
         openai_max_output_tokens=int(max_output),
+        research_provider=research,
+        brave_api_key=brave_key,
+        research_max_queries=int(max_queries),
+        research_results_per_query=int(per_query),
+        research_max_pages=int(max_pages),
+        fetch_timeout_seconds=fetch_timeout,
+        fetch_max_bytes=int(fetch_bytes),
+        research_stale_days=int(stale_days),
     )

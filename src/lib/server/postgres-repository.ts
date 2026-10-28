@@ -1,8 +1,9 @@
 import postgres from "postgres";
+import { evidenceClaimSchema, evidenceSourceSchema } from "@/lib/domain/evidence";
 import { parseRunResult } from "@/lib/domain/reasoning";
 import {
   RUN_EVENT_TYPES, RUN_STAGES, RUN_STATUSES,
-  type CreateProjectInput, type GenerationSummary, type Project, type RunBudget, type RunEvent, type StartRunInput,
+  type CreateProjectInput, type GenerationSummary, type Project, type RunBudget, type RunEvidence, type RunEvent, type StartRunInput,
   type ThoughtRun, type UpdateProjectInput
 } from "@/lib/domain/types";
 import {
@@ -267,6 +268,39 @@ class PostgresOwnerRepository implements OwnerScopedRepository {
       const rows = await tx<EventRow[]>`
         select * from echiche.run_events where run_id = ${runId} and owner_user_id = ${this.ownerId} order by sequence asc`;
       return rows.map(asEvent);
+    });
+  }
+
+  async getEvidence(runId: string): Promise<RunEvidence> {
+    return this.tx(async tx => {
+      const sources = await tx<Record<string, unknown>[]>`
+        select source_key as "sourceId", url, domain, title, publisher, published_at as "publishedAt",
+               to_char(retrieved_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as "retrievedAt", passages
+          from echiche.sources where run_id = ${runId} and owner_user_id = ${this.ownerId}
+         order by length(source_key), source_key`;
+      const claims = await tx<Record<string, unknown>[]>`
+        select c.claim_key as "claimId", c.text, c.label, c.status, c.freshness, c.contradicted,
+               coalesce(json_agg(json_build_object(
+                 'sourceId', s.source_key, 'passageId', cs.passage_key, 'relation', cs.relation,
+                 'quote', cs.quote, 'verdict', cs.verdict, 'note', cs.note) order by cs.passage_key)
+                 filter (where cs.claim_id is not null), '[]') as links
+          from echiche.claims c
+          left join echiche.claim_sources cs on cs.claim_id = c.id and cs.owner_user_id = c.owner_user_id
+          left join echiche.sources s on s.id = cs.source_id and s.owner_user_id = c.owner_user_id
+         where c.run_id = ${runId} and c.owner_user_id = ${this.ownerId}
+         group by c.id order by length(c.claim_key), c.claim_key`;
+      return {
+        sources: sources.map(row => {
+          const parsed = evidenceSourceSchema.safeParse(row);
+          if (!parsed.success) throw new DataIntegrityError("source", String(row.sourceId));
+          return parsed.data;
+        }),
+        claims: claims.map(row => {
+          const parsed = evidenceClaimSchema.safeParse(row);
+          if (!parsed.success) throw new DataIntegrityError("claim", String(row.claimId));
+          return parsed.data;
+        })
+      };
     });
   }
 

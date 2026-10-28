@@ -1,0 +1,6 @@
+User-agent: *
+Disallow: /private/
+
+User-agent: EchicheResearchBot
+Disallow: /private/
+Disallow: /blocked-for-echiche

@@ -69,14 +69,22 @@ class ExecutorSettings:
     requeue_base_seconds: float = 5.0
 
 
-def budget_exceeded(run: ClaimedRun, usage: Usage) -> str | None:
-    """Checked before each stage. Caps are never raised here; only the user can (resume)."""
+def budget_exceeded(run: ClaimedRun, usage: Usage, stage: Stage | None = None) -> str | None:
+    """Checked before each stage. Caps are never raised here; only the user can (resume).
+
+    The research cap is checked only before the researching stage (the only stage that
+    searches): a run that used its last search can still finish critique and synthesis.
+    """
     budget = run.budget
     if usage.steps >= budget.max_steps:
         return "BUDGET_STEPS"
     if usage.active_seconds >= budget.max_active_seconds:
         return "BUDGET_TIME"
-    if usage.research_calls >= budget.max_research_calls and budget.max_research_calls > 0:
+    if (
+        stage in (None, "researching")
+        and budget.max_research_calls > 0
+        and usage.research_calls >= budget.max_research_calls
+    ):
         return "BUDGET_RESEARCH"
     if budget.max_cost_usd > 0 and usage.cost_usd >= budget.max_cost_usd:
         return "BUDGET_COST"
@@ -177,7 +185,7 @@ def _execute(
             store.cancel(run)
             log("info", "run_cancelled", stage=stage, **fields)
             return Outcome.CANCELLED
-        exceeded = budget_exceeded(run, usage)
+        exceeded = budget_exceeded(run, usage, stage)
         if exceeded:
             store.pause_for_budget(run, exceeded)
             log("info", "run_paused_for_budget", stage=stage, error_code=exceeded, **fields)
@@ -193,6 +201,8 @@ def _execute(
             timeout_seconds=timeout,
             project_context=run.project_context,
             remaining_cost_usd=run.budget.max_cost_usd - usage.cost_usd,
+            remaining_research_calls=max(0, run.budget.max_research_calls - usage.research_calls),
+            final_attempt=run.attempt >= run.max_attempts,
         )
         started = time.monotonic()
         try:
@@ -205,12 +215,12 @@ def _execute(
             else:
                 result = _call(provider, stage, ctx, settings, shutdown, fields)
         except BudgetPreflightError as error:
-            store.record_calls(run, ctx.calls)
+            store.record_calls(run, ctx.calls, ctx.research_calls)
             store.pause_for_budget(run, error.code)
             log("info", "run_paused_for_budget", stage=stage, error_code=error.code, **fields)
             return Outcome.PAUSED
         except TransientProviderError as error:
-            store.record_calls(run, ctx.calls)
+            store.record_calls(run, ctx.calls, ctx.research_calls)
             if shutdown.is_set():
                 store.release_for_retry(run, 0, "WORKER_SHUTDOWN", consume_attempt=False)
                 return Outcome.REQUEUED
@@ -223,19 +233,21 @@ def _execute(
             log("warn", "run_requeued", stage=stage, error_code=error.code, **fields)
             return Outcome.REQUEUED
         except ProviderError as error:
-            store.record_calls(run, ctx.calls)
+            store.record_calls(run, ctx.calls, ctx.research_calls)
             store.fail(run, error.code)
             log("error", "run_failed", stage=stage, error_code=error.code, **fields)
             return Outcome.FAILED
 
         if result.output.stage != stage:
-            store.record_calls(run, ctx.calls)
+            store.record_calls(run, ctx.calls, ctx.research_calls)
             store.fail(run, "INVALID_PROVIDER_OUTPUT")
             log("error", "run_failed", stage=stage, error_code="INVALID_PROVIDER_OUTPUT", **fields)
             return Outcome.FAILED
         duration_ms = int((time.monotonic() - started) * 1000)
         cost = Decimal(result.cost_usd) + ctx.spent_usd()
-        usage = store.commit_stage(run, result.output, duration_ms, result.research_calls, cost, ctx.calls)
+        usage = store.commit_stage(
+            run, result.output, duration_ms, result.research_calls, cost, ctx.calls, ctx.research_calls
+        )
         outputs[stage] = to_v2(result.output)
         log("info", "stage_completed", stage=stage, duration_ms=duration_ms, **fields)
 

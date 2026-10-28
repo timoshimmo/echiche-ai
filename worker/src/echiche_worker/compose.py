@@ -72,6 +72,18 @@ def _with_clarification(brief: DecisionBriefV1, planning: StageOutput | None) ->
     return brief.model_copy(update={"limitations": [*brief.limitations, note]})
 
 
+def _with_research_limits(brief: DecisionBriefV1, outputs: Mapping[Stage, StageOutput]) -> DecisionBriefV1:
+    """Carries the research and verification stages' limitations into the brief verbatim
+    (deterministic, application-written), so evidence gaps can never be dropped by the model."""
+    notes = [n for s in ("researching", "verifying") for n in getattr(outputs.get(s), "limitations", [])]
+    merged = list(brief.limitations)
+    for note in notes:
+        text = note if len(note) <= 500 else note[:497] + "..."
+        if text not in merged and len(merged) < 10:
+            merged.append(text)
+    return brief if merged == list(brief.limitations) else brief.model_copy(update={"limitations": merged})
+
+
 def compose_final(prompt: str, outputs: Mapping[Stage, StageOutput]) -> tuple[str, BaseModel]:
     """Returns (result_schema_version, result).
 
@@ -86,5 +98,6 @@ def compose_final(prompt: str, outputs: Mapping[Stage, StageOutput]) -> tuple[st
         if missing:
             raise MissingStageError(f"missing checkpoint for {missing[0]}")
         brief = DecisionBriefV1.model_validate(data)
-        return DECISION_BRIEF_SCHEMA_VERSION, _with_clarification(brief, outputs.get("planning"))
+        brief = _with_clarification(brief, outputs.get("planning"))
+        return DECISION_BRIEF_SCHEMA_VERSION, _with_research_limits(brief, outputs)
     return RESULT_SCHEMA_VERSION, compose_result(prompt, outputs)

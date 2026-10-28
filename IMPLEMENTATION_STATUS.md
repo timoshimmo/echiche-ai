@@ -1,6 +1,6 @@
 # Implementation and verification status
 
-_Last updated: 2026-10-26 (M4, "Model provider and prompt registry")_
+_Last updated: 2026-10-28 (M5, "Research, evidence and verification")_
 
 "Verified" means the check was actually run, with the stated result, in the environment noted. Code presence alone is not verification.
 
@@ -11,15 +11,44 @@ From a **clean clone** against a **fresh database**:
 | Check | Result |
 |---|---|
 | `npm ci` · typecheck · lint | ✅ · 0 errors · 0 problems |
-| `npm test` (web unit: routes, config incl. refusing `OPENAI_API_KEY`, contracts for both result versions) | ✅ 66 tests |
+| `npm test` (web unit: routes incl. owner-scoped evidence, config incl. refusing `OPENAI_API_KEY`, contracts for both result versions and research rows) | ✅ 69 tests |
 | `npm run build` (no env); client-bundle scan; `npm audit --omit=dev` | ✅ · none found · 0 vulnerabilities |
-| `npm run test:db:prepare` from empty (0001–0005 via Supabase CLI), then re-run | ✅ · ✅ no-op |
-| `npm run test:integration`: repository + RLS as `echiche_web`, plus **two cross-language E2Es** (demo worker CLI; model pipeline with a scripted model writing a `decision-brief.v1` and `model_calls` that TS reads through RLS) | ✅ 34 tests |
+| `npm run test:db:prepare` from empty (0001–0006 via Supabase CLI), then re-run | ✅ · ✅ no-op |
+| `npm run test:integration`: repository + RLS as `echiche_web`, plus **three cross-language E2Es**: the demo worker CLI; the model pipeline with a scripted model; research over a local TLS site, where every brief citation resolves to a stored source and a verified quote, read by TS through RLS | ✅ 35 tests |
 | Worker: `uv sync --locked`, ruff, ruff format, pyright strict (incl. tests), `contracts --check` | ✅ |
-| Worker unit tests (incl. prompt registry, model pipeline, OpenAI adapter against a local mock HTTP server) | ✅ 82 tests |
-| Worker integration (as `echiche_worker`) | ✅ 35 tests |
-| Same web and worker integration suites on a **fresh cluster with a Supabase-like admin** (non-superuser, CREATEROLE, BYPASSRLS) | ✅ 34 + 35 |
+| Worker unit tests (incl. prompt registry, model pipeline, OpenAI adapter, Brave adapter, fetcher guards over real TLS, research and verification pipeline with adversarial fixtures) | ✅ 139 tests |
+| Worker integration (as `echiche_worker`) | ✅ 39 tests |
+| Same web and worker integration suites on a **fresh cluster with a Supabase-like admin** (non-superuser, CREATEROLE, BYPASSRLS) | ✅ 35 + 39 |
 | Upgrading an M3 database with 25 runs: only 0005 applied; M3 `stage-output.v1` checkpoints still load (integration test) | ✅ |
+
+**M5 checks.** No live Brave or web request was made. All fetching runs against a local HTTPS fixture site with a throwaway certificate, using real TLS and hostname checks.
+
+Adversarial fixtures are covered:
+- no results;
+- invalid URLs: ftp, http, credentials in the URL, odd ports;
+- refused pages: robots.txt, `noarchive`/`noai` in meta and headers, PDF, oversize, too short, 404, redirect loop, redirect to a private address, https→http downgrade, slow page;
+- a mis-quoted claim and an unsupported claim;
+- a contradicting source and a stale (2014) source;
+- a page with hidden prompt-injection text that tries to cite S9 and force high confidence.
+
+What is enforced:
+- **Addresses:** non-public addresses are refused, including IPv4-mapped IPv6, CGNAT and metadata IPs, and a host with any bad address.
+- **Limits:** search and page limits, the research budget (it pauses before research when used up), and a spend pre-check before each search.
+- **Search outages:** they retry; on the last attempt the run degrades explicitly. A rejected key fails the run.
+- **Citations:** the brief may cite only sources behind verified claims, and "high" confidence needs two domains.
+- **Limitations:** those from research and verification are carried into the brief.
+- **Persistence:** sources and claims are written once even across a crash and resume. Research rows are owner-scoped and append-only for both roles.
+
+**Mutation checks** (each makes tests fail):
+- disabling the quote check, the address guard, robots.txt or the meta opt-out;
+- disabling the brief citation guard;
+- swallowing search outages before the last attempt.
+
+**Upgrade and image:**
+- Upgrading a populated M4 database applied only 0006, and its 25 runs were kept.
+- The worker image layout, replayed outside Docker, passes `--check-config` with OpenAI and Brave configured and placeholder keys.
+
+**UI:** the sources view (links, verified quotes, sources read but not cited, claims that failed verification) was rendered and inspected at desktop and 390 px widths.
 
 **M4 checks (no live API call was made; there is no key in this environment):**
 - **Prompt registry:** loads 3 active and 4 draft prompts. It rejects placeholders, unknown keys, unknown contracts, a changelog that doesn't match the version, and duplicate ids. Draft prompts cannot run.
@@ -54,6 +83,8 @@ From a **clean clone** against a **fresh database**:
 
 ## Not yet verified (no Docker, hosted accounts or API keys in the build environment)
 
+- **A live Brave search and live page fetching.** The opt-in test (`ECHICHE_LIVE_BRAVE=1 … pytest -m live -k research`) is for the decision owner to run.
+- **Brave's written confirmation** of transient result use and excerpt storage on the chosen plan (licensing; ADR-008).
 - **A live OpenAI call.** The opt-in smoke test (`ECHICHE_LIVE_OPENAI=1 … pytest -m live`) is for the decision owner to run with their own key. Model quality is unevaluated until M7.
 - **Not verified in OpenAI's docs:** the context window and supported reasoning-effort values of `gpt-6.1-sol`. The official model page was unreachable.
 
@@ -62,6 +93,16 @@ From a **clean clone** against a **fresh database**:
 - **The magic-link email round trip** (manual, local stack).
 
 ## Implemented
+
+**M5** (ADR-008 accepted 2026-10-28: Brave for discovery; the worker reads pages itself; research is off until a key is set)
+- **Migration 0006:** `sources`, `claims`, `claim_sources`, `research_calls`, with RLS (owner reads; worker inserts; nobody updates or deletes).
+- **Worker modules:** Brave adapter (`research.py`), safe fetcher (`fetch.py`), deterministic passages and quote matching (`passages.py`), pipeline and verification rubric (`research_pipeline.py`).
+- **Prompts and contracts:** prompts `research-planner`, `claim-extractor` and `decision-verifier` are active at 2.0.0, and critic and synthesis are at 2.1.0. New contracts: `research-plan.v1`, `claim-set.v1`, `claim-verification.v1`, `evidence-set.v1`, `verification-report.v1`.
+- **Web:** `evidence` on `GET /api/runs/:id` (Zod-validated, https only); the sources view in the brief.
+- **Deployment, docs and tests:**
+  - `render.yaml` research variables (off by default); the CI image check builds the research pipeline;
+  - opt-in live research test;
+  - ADR-008 and runbooks.
 
 **M4** (ADR-007 accepted 2026-10-26, D9–D12 approved; paid calls stay off until a key is set)
 - **Prompt registry** (`prompts/runtime/`, TOML frontmatter, fail-closed loading). The 3 active prompts were rewritten to v2.0.0; the other 4 are drafts.
@@ -107,6 +148,8 @@ From a **clean clone** against a **fresh database**:
 
 | Gap | Milestone |
 |---|---|
+| Brave licensing confirmation; retention period for stored excerpts; privacy notice mention of Brave | before enabling research for real users |
+| No PDF or JavaScript-rendered pages; lexical passage selection; no cross-run search cache | later |
 | Model output not evaluated (no eval set) | M7 |
 | Privacy notice must mention OpenAI (data sent, retention) | before real users |
 | `proposed_memory_updates` are displayed only, never saved | M6 |

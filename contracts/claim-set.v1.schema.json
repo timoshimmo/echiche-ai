@@ -1,0 +1,104 @@
+{
+  "$defs": {
+    "ClaimEvidenceV1": {
+      "additionalProperties": false,
+      "properties": {
+        "passage_id": {
+          "pattern": "^S[0-9]{1,3}\\.p[0-9]{1,2}$",
+          "title": "Passage Id",
+          "type": "string"
+        },
+        "quote": {
+          "title": "Quote",
+          "type": "string"
+        },
+        "relation": {
+          "enum": [
+            "supports",
+            "contradicts",
+            "context"
+          ],
+          "title": "Relation",
+          "type": "string"
+        }
+      },
+      "required": [
+        "passage_id",
+        "relation",
+        "quote"
+      ],
+      "title": "ClaimEvidenceV1",
+      "type": "object"
+    },
+    "ExtractedClaimV1": {
+      "additionalProperties": false,
+      "properties": {
+        "claim_id": {
+          "pattern": "^C[0-9]{1,3}$",
+          "title": "Claim Id",
+          "type": "string"
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/ClaimEvidenceV1"
+          },
+          "maxItems": 3,
+          "minItems": 1,
+          "title": "Evidence",
+          "type": "array"
+        },
+        "label": {
+          "enum": [
+            "fact",
+            "inference",
+            "hypothesis",
+            "speculation",
+            "unknown"
+          ],
+          "title": "Label",
+          "type": "string"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "claim_id",
+        "text",
+        "label",
+        "evidence"
+      ],
+      "title": "ExtractedClaimV1",
+      "type": "object"
+    }
+  },
+  "$id": "claim-set.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Model output: decision-relevant claims, each tied to exact quotes from supplied passages.",
+  "properties": {
+    "claims": {
+      "items": {
+        "$ref": "#/$defs/ExtractedClaimV1"
+      },
+      "maxItems": 15,
+      "title": "Claims",
+      "type": "array"
+    },
+    "gaps": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 8,
+      "title": "Gaps",
+      "type": "array"
+    }
+  },
+  "required": [
+    "claims",
+    "gaps"
+  ],
+  "title": "ClaimSetV1",
+  "type": "object"
+}

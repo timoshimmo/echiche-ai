@@ -1,0 +1,59 @@
+{
+  "$defs": {
+    "ClaimJudgmentV1": {
+      "additionalProperties": false,
+      "properties": {
+        "claim_id": {
+          "pattern": "^C[0-9]{1,3}$",
+          "title": "Claim Id",
+          "type": "string"
+        },
+        "note": {
+          "title": "Note",
+          "type": "string"
+        },
+        "passage_id": {
+          "pattern": "^S[0-9]{1,3}\\.p[0-9]{1,2}$",
+          "title": "Passage Id",
+          "type": "string"
+        },
+        "verdict": {
+          "enum": [
+            "supported",
+            "partially_supported",
+            "not_supported"
+          ],
+          "title": "Verdict",
+          "type": "string"
+        }
+      },
+      "required": [
+        "claim_id",
+        "passage_id",
+        "verdict",
+        "note"
+      ],
+      "title": "ClaimJudgmentV1",
+      "type": "object"
+    }
+  },
+  "$id": "claim-verification.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Model output from the independent verifier: one judgment per (claim, passage) pair.",
+  "properties": {
+    "judgments": {
+      "items": {
+        "$ref": "#/$defs/ClaimJudgmentV1"
+      },
+      "maxItems": 45,
+      "title": "Judgments",
+      "type": "array"
+    }
+  },
+  "required": [
+    "judgments"
+  ],
+  "title": "ClaimVerificationV1",
+  "type": "object"
+}

@@ -1,16 +1,21 @@
-"""Model-backed reasoning provider (M4, ADR-007).
+"""Model-backed reasoning provider (M4 ADR-007; research and verification M5 ADR-008).
 
 Stage plan:
-  planning      -> model: decision-framing          -> decision-frame.v1
-  researching   -> deterministic skip (no research provider until M5)
-  critiquing    -> model: decision-critic           -> critique.v1
-  verifying     -> deterministic: re-validates frame and critique, checks citations
-  synthesizing  -> model: decision-brief-synthesis  -> decision-brief.v1
+  planning      -> model: decision-framing -> decision-frame.v1
+  researching   -> model: research-planner -> queries; Brave discovery; the worker fetches pages
+                   itself -> evidence-set.v1 (sources S1..Sn with passages). Without a research
+                   provider: skipped, with an explicit limitation.
+  critiquing    -> model: decision-critic (sees the evidence passages) -> critique.v1
+  verifying     -> model: claim-extractor -> claims with exact quotes; deterministic quote check;
+                   model: decision-verifier (independent) -> verification-report.v1
+  synthesizing  -> model: decision-brief-synthesis (sees verified claims only) -> decision-brief.v1,
+                   guarded: citations only to sources backing verified claims; "high" confidence
+                   only with verified support from two or more domains.
 
 Every model call:
-  1. renders a reviewed prompt from the registry; user content only in fenced data blocks;
+  1. renders a reviewed prompt from the registry; user and web content only in fenced data blocks;
   2. checks the worst-case cost against the run's remaining spend cap (else BUDGET_COST);
-  3. validates the output against the Pydantic contract plus the citation guard;
+  3. validates the output against its Pydantic contract plus deterministic guards;
   4. on an invalid output, makes exactly one repair attempt, then fails;
   5. appends a ModelCallRecord (tokens, cost, latency, prompt id/version/hash; no content).
 """
@@ -19,6 +24,7 @@ from __future__ import annotations
 
 import json
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, cast
 
@@ -28,12 +34,19 @@ from echiche_worker.contracts import (
     CRITIQUE_SCHEMA_VERSION,
     DECISION_BRIEF_SCHEMA_VERSION,
     DECISION_FRAME_SCHEMA_VERSION,
+    EVIDENCE_SET_SCHEMA_VERSION,
     MODEL_OUTPUTS,
+    VERIFICATION_REPORT_SCHEMA_VERSION,
+    ClaimSetV1,
+    ClaimVerificationV1,
     CritiqueV1,
     DecisionBriefV1,
     DecisionFrameV1,
+    EvidenceSetV1,
+    ResearchPlanV1,
     Stage,
     StageOutputV2,
+    VerificationReportV1,
 )
 from echiche_worker.llm import ModelCallError, ModelClient, ModelReply, ModelRequest, PriceTable, TokenUsage
 from echiche_worker.openai_adapter import strict_schema
@@ -50,13 +63,28 @@ from echiche_worker.provider import (
     StageContext,
     StageResult,
 )
+from echiche_worker.research_pipeline import (
+    GuardError,
+    ResearchSettings,
+    build_report,
+    check_claim_set,
+    check_judgments,
+    claims_for_verifier,
+    evidence_for_model,
+    gather_evidence,
+    quote_checked,
+    usable_evidence,
+)
 
 MAX_REPAIR_ATTEMPTS = 1
-_STAGE_PROMPTS: dict[Stage, str] = {
-    "planning": "decision-framing",
-    "critiquing": "decision-critic",
-    "synthesizing": "decision-brief-synthesis",
-}
+PROMPT_IDS = (
+    "decision-framing",
+    "research-planner",
+    "decision-critic",
+    "claim-extractor",
+    "decision-verifier",
+    "decision-brief-synthesis",
+)
 
 
 class ReasoningModeMismatchError(ProviderError):
@@ -66,8 +94,7 @@ class ReasoningModeMismatchError(ProviderError):
     code = "REASONING_MODE_MISMATCH"
 
 
-class CitationError(ValueError):
-    pass
+CitationError = GuardError
 
 
 def check_citations(payload: BaseModel, allowed: frozenset[str]) -> None:
@@ -89,19 +116,35 @@ def check_citations(payload: BaseModel, allowed: frozenset[str]) -> None:
 
     walk(payload.model_dump(mode="json"))
     if bad:
-        raise CitationError(f"{len(bad)} cited source ID(s) were not supplied")
+        raise GuardError(
+            f"{len(bad)} cited source ID(s) were not supplied: only source IDs present in the evidence data "
+            "may be cited; if the evidence is empty, citations and every source_ids list must be empty"
+        )
 
 
-def repair_note(error: ValidationError | CitationError) -> str:
-    """Names failing JSON paths and rule messages only; never echoes the model's content."""
+def check_brief(brief: DecisionBriefV1, allowed: dict[str, str]) -> None:
+    """Citation guard plus the confidence rule (ADR-008): 'high' needs verified support
+    from at least two independent domains among the sources the brief cites."""
+    check_citations(brief, frozenset(allowed))
+    if brief.confidence.level == "high":
+        cited = {c.source_id for c in brief.citations} | {
+            sid for point in brief.supporting_evidence for sid in point.source_ids
+        }
+        domains = {allowed[sid] for sid in cited if sid in allowed}
+        if len(domains) < 2:
+            raise GuardError(
+                "confidence.level: high requires cited, verified support from at least two independent "
+                "sources (different domains); lower the confidence or explain the limitation"
+            )
+
+
+def repair_note(error: ValidationError | GuardError) -> str:
+    """Names failing JSON paths, IDs and rule messages only; never echoes the model's content."""
     lines = [
         "Your previous output did not satisfy the required contract. Fix these problems and return the full output:"
     ]
-    if isinstance(error, CitationError):
-        lines.append(
-            "- citations/source_ids: only source IDs present in the evidence data may be cited; "
-            "if the evidence list is empty, these lists must be empty."
-        )
+    if isinstance(error, GuardError):
+        lines.append(f"- {error.note}")
     else:
         for item in error.errors(include_input=False, include_url=False)[:20]:
             path = ".".join(str(p) for p in item["loc"]) or "(root)"
@@ -127,88 +170,168 @@ class ModelReasoningProvider:
     name = "model"
 
     def __init__(
-        self, client: ModelClient, registry: PromptRegistry, prices: PriceTable, settings: ModelSettings
+        self,
+        client: ModelClient,
+        registry: PromptRegistry,
+        prices: PriceTable,
+        settings: ModelSettings,
+        research: ResearchSettings | None = None,
     ) -> None:
         self.client = client
         self.prices = prices
         self.settings = settings
+        self.research = research
         prices.price(client.model)  # unknown model -> KeyError at start-up, never at run time
-        self.prompts: dict[Stage, Prompt] = {}
-        for stage, prompt_id in _STAGE_PROMPTS.items():
+        self.prompts: dict[str, Prompt] = {}
+        for prompt_id in PROMPT_IDS:
             prompt = registry.get(prompt_id)
             if prompt.meta.output_schema not in MODEL_OUTPUTS:
                 raise ValueError(f"{prompt.ref}: output schema has no contract")
-            self.prompts[stage] = prompt
+            self.prompts[prompt_id] = prompt
         self._schemas = {name: strict_schema(model) for name, model in MODEL_OUTPUTS.items()}
 
     @property
     def label(self) -> str:
-        return f"{self.client.provider}:{self.client.model}"
+        research = f"+{self.research.search.provider}" if self.research else ""
+        return f"{self.client.provider}:{self.client.model}{research}"
 
     # --- stages ---------------------------------------------------------------------
 
     def run_stage(self, stage: Stage, ctx: StageContext) -> StageResult:
+        deadline = time.monotonic() + ctx.timeout_seconds
         if stage == "planning":
-            frame = self._generate(
-                stage, ctx, DecisionFrameV1, {"project_context": ctx.project_context, "question": ctx.prompt}
-            )
-            limitations = (
-                [f"Clarification would help: {frame.clarifying_question}"]
-                if frame.clarification_needed and frame.clarifying_question
-                else []
-            )
-            content = (
-                f"Decision: {frame.decision_statement}\n\nGoal: {frame.goal}\n\n"
-                f"Options:\n{_bullets(frame.options)}\n\nCriteria:\n{_bullets(frame.criteria)}\n\n"
-                f"Unknowns:\n{_bullets(frame.unknowns)}"
-            )
-            return self._result(stage, "Decision frame", content, frame, DECISION_FRAME_SCHEMA_VERSION, limitations)
-
-        if stage == "researching":
-            return StageResult(
-                output=StageOutputV2(
-                    stage=stage, title="Research skipped", content=NO_RESEARCH, limitations=[NO_RESEARCH]
-                )
-            )
-
+            return self._planning(ctx, deadline)
         frame = self._previous(ctx, "planning", DecisionFrameV1, DECISION_FRAME_SCHEMA_VERSION)
+        if stage == "researching":
+            return self._researching(ctx, frame, deadline)
+        evidence = self._evidence(ctx)
         if stage == "critiquing":
             critique = self._generate(
-                stage, ctx, CritiqueV1, {"decision_frame_json": _json(frame), "evidence_json": "[]"}
+                "decision-critic",
+                stage,
+                ctx,
+                CritiqueV1,
+                {"decision_frame_json": _json(frame), "evidence_json": evidence_for_model(evidence)},
+                deadline,
             )
             content = (
                 f"Strongest objection: {critique.strongest_objection}\n\n"
                 f"Missing evidence:\n{_bullets(critique.missing_evidence)}"
             )
             return self._result(stage, "Critique", content, critique, CRITIQUE_SCHEMA_VERSION, [])
-
         critique = self._previous(ctx, "critiquing", CritiqueV1, CRITIQUE_SCHEMA_VERSION)
         if stage == "verifying":
-            # Deterministic: both contracts were re-validated by _previous. There is no evidence
-            # to check yet; the brief's citations are guarded when it is generated.
-            return StageResult(
-                output=StageOutputV2(
-                    stage=stage,
-                    title="Check structure",
-                    content=(
-                        "The decision frame and critique passed their contracts. No factual claims were verified "
-                        "because no research was performed; the brief may not cite any sources."
-                    ),
-                    limitations=["Structural check only; no claims or citations to verify."],
-                )
-            )
-
+            return self._verifying(ctx, frame, evidence, deadline)
+        report = self._report(ctx)
+        evidence_json, allowed = usable_evidence(report, evidence)
         brief = self._generate(
+            "decision-brief-synthesis",
             stage,
             ctx,
             DecisionBriefV1,
-            {"decision_frame_json": _json(frame), "critique_json": _json(critique), "evidence_json": "[]"},
+            {"decision_frame_json": _json(frame), "critique_json": _json(critique), "evidence_json": evidence_json},
+            deadline,
+            check=lambda b: check_brief(b, allowed),
         )
         content = (
             f"Recommendation: {brief.recommendation.summary}\n\n"
             f"Confidence: {brief.confidence.level}. {brief.confidence.explanation}"
         )
         return self._result(stage, "Decision brief", content, brief, DECISION_BRIEF_SCHEMA_VERSION, [])
+
+    def _planning(self, ctx: StageContext, deadline: float) -> StageResult:
+        frame = self._generate(
+            "decision-framing",
+            "planning",
+            ctx,
+            DecisionFrameV1,
+            {"project_context": ctx.project_context, "question": ctx.prompt},
+            deadline,
+        )
+        limitations = (
+            [f"Clarification would help: {frame.clarifying_question}"]
+            if frame.clarification_needed and frame.clarifying_question
+            else []
+        )
+        content = (
+            f"Decision: {frame.decision_statement}\n\nGoal: {frame.goal}\n\n"
+            f"Options:\n{_bullets(frame.options)}\n\nCriteria:\n{_bullets(frame.criteria)}\n\n"
+            f"Unknowns:\n{_bullets(frame.unknowns)}"
+        )
+        return self._result("planning", "Decision frame", content, frame, DECISION_FRAME_SCHEMA_VERSION, limitations)
+
+    def _researching(self, ctx: StageContext, frame: DecisionFrameV1, deadline: float) -> StageResult:
+        if self.research is None:
+            return StageResult(
+                output=StageOutputV2(
+                    stage="researching", title="Research skipped", content=NO_RESEARCH, limitations=[NO_RESEARCH]
+                )
+            )
+
+        def plan(limit: int) -> list[str]:
+            limits = json.dumps({"max_queries": limit})
+            result = self._generate(
+                "research-planner",
+                "researching",
+                ctx,
+                ResearchPlanV1,
+                {"decision_frame_json": _json(frame), "limits_json": limits},
+                deadline,
+            )
+            return [q.query for q in result.queries][:limit]
+
+        evidence, searches = gather_evidence(self.research, ctx, frame, plan, deadline)
+        reads = "\n".join(f"- {s.source_id}: {s.title} ({s.domain})" for s in evidence.sources) or "- none"
+        content = (
+            f"Searches: {len(evidence.searches)} · sources read and kept: {len(evidence.sources)} · "
+            f"skipped: {len(evidence.skipped)}\n\nSources:\n{reads}"
+        )
+        result = self._result(
+            "researching", "Research", content, evidence, EVIDENCE_SET_SCHEMA_VERSION, list(evidence.limitations)
+        )
+        return StageResult(output=result.output, research_calls=searches)
+
+    def _verifying(
+        self, ctx: StageContext, frame: DecisionFrameV1, evidence: EvidenceSetV1 | None, deadline: float
+    ) -> StageResult:
+        if evidence is None or not evidence.sources:
+            note = "No sources were read, so there were no claims to verify."
+            return StageResult(
+                output=StageOutputV2(stage="verifying", title="Verification", content=note, limitations=[note])
+            )
+        claims = self._generate(
+            "claim-extractor",
+            "verifying",
+            ctx,
+            ClaimSetV1,
+            {"decision_frame_json": _json(frame), "evidence_json": evidence_for_model(evidence)},
+            deadline,
+            check=lambda c: check_claim_set(c, evidence),
+        )
+        found = {(cid, pid) for cid, pid, ok in quote_checked(claims, evidence) if ok}
+        judgments: ClaimVerificationV1 | None = None
+        if found:
+            judgments = self._generate(
+                "decision-verifier",
+                "verifying",
+                ctx,
+                ClaimVerificationV1,
+                {"claims_json": claims_for_verifier(claims, evidence, found)},
+                deadline,
+                check=lambda j: check_judgments(j, found),
+            )
+        stale_days = self.research.stale_days if self.research else 730
+        report = build_report(claims, evidence, found, judgments, stale_days)
+        counts = {
+            s: sum(1 for c in report.claims if c.status == s) for s in ("verified", "partial", "unsupported", "invalid")
+        }
+        content = (
+            f"Claims checked: {len(report.claims)} · verified {counts['verified']} · partial {counts['partial']} · "
+            f"unsupported {counts['unsupported']} · discarded (quote not found) {counts['invalid']}"
+        )
+        return self._result(
+            "verifying", "Verification", content, report, VERIFICATION_REPORT_SCHEMA_VERSION, list(report.limitations)
+        )
 
     # --- helpers --------------------------------------------------------------------
 
@@ -235,10 +358,35 @@ class ModelReasoningProvider:
         except ValidationError as error:
             raise ReasoningModeMismatchError(f"{stage} checkpoint data is invalid") from error
 
-    def _generate[M: BaseModel](self, stage: Stage, ctx: StageContext, model: type[M], inputs: dict[str, str]) -> M:
-        prompt = self.prompts[stage]
+    @staticmethod
+    def _optional[M: BaseModel](ctx: StageContext, stage: Stage, model: type[M], schema: str) -> M | None:
+        output = ctx.previous.get(stage)
+        data = getattr(output, "data", None)
+        if getattr(output, "data_schema", None) != schema or data is None:
+            return None
+        try:
+            return model.model_validate(data)
+        except ValidationError as error:
+            raise ReasoningModeMismatchError(f"{stage} checkpoint data is invalid") from error
+
+    def _evidence(self, ctx: StageContext) -> EvidenceSetV1 | None:
+        return self._optional(ctx, "researching", EvidenceSetV1, EVIDENCE_SET_SCHEMA_VERSION)
+
+    def _report(self, ctx: StageContext) -> VerificationReportV1 | None:
+        return self._optional(ctx, "verifying", VerificationReportV1, VERIFICATION_REPORT_SCHEMA_VERSION)
+
+    def _generate[M: BaseModel](
+        self,
+        prompt_id: str,
+        stage: Stage,
+        ctx: StageContext,
+        model: type[M],
+        inputs: dict[str, str],
+        deadline: float,
+        check: Callable[[M], None] | None = None,
+    ) -> M:
+        prompt = self.prompts[prompt_id]
         schema_name = prompt.meta.output_schema
-        deadline = time.monotonic() + ctx.timeout_seconds
         note: str | None = None
         for attempt in range(MAX_REPAIR_ATTEMPTS + 1):
             repair = attempt > 0
@@ -266,8 +414,11 @@ class ModelReasoningProvider:
                 raise ProviderOutputTruncatedError("model output hit max_output_tokens")
             try:
                 parsed = model.model_validate_json(reply.text)
-                check_citations(parsed, frozenset())  # M4: no evidence is ever supplied
-            except (ValidationError, CitationError) as error:
+                if check is not None:
+                    check(parsed)
+                else:
+                    check_citations(parsed, frozenset())  # nothing citable was supplied to this prompt
+            except (ValidationError, GuardError) as error:
                 last = attempt == MAX_REPAIR_ATTEMPTS
                 code = InvalidProviderOutputError.code
                 self._record_reply(ctx, stage, prompt, repair, "invalid_output", code, reply)

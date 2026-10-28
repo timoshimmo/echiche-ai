@@ -37,9 +37,12 @@ The body is sent verbatim as the instructions. Inputs are never interpolated int
 | Prompt | Status | Output |
 |---|---|---|
 | `decision-framing@2.0.0` | active | `decision-frame.v1` |
-| `decision-critic@2.0.0` | active | `critique.v1` |
-| `decision-brief-synthesis@2.0.0` | active | `decision-brief.v1` |
-| `research-planner`, `claim-extractor`, `decision-verifier`, `memory-proposal` @1.1.0 | draft | contracts arrive in M5/M6 |
+| `research-planner@2.0.0` | active (M5) | `research-plan.v1` |
+| `decision-critic@2.1.0` | active | `critique.v1` |
+| `claim-extractor@2.0.0` | active (M5) | `claim-set.v1` |
+| `decision-verifier@2.0.0` | active (M5) | `claim-verification.v1` |
+| `decision-brief-synthesis@2.1.0` | active | `decision-brief.v1` |
+| `memory-proposal@1.1.0` | draft | contract arrives in M6 |
 
 ## Promotion rules
 - **Tests:** never activate or change a prompt without tests against representative synthetic fixtures (the worker's `test_model_provider.py`; the M7 evaluation set once it exists).

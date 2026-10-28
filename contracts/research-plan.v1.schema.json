@@ -1,0 +1,56 @@
+{
+  "$defs": {
+    "ResearchQueryV1": {
+      "additionalProperties": false,
+      "properties": {
+        "query": {
+          "title": "Query",
+          "type": "string"
+        },
+        "rationale": {
+          "title": "Rationale",
+          "type": "string"
+        },
+        "research_question": {
+          "title": "Research Question",
+          "type": "string"
+        }
+      },
+      "required": [
+        "query",
+        "research_question",
+        "rationale"
+      ],
+      "title": "ResearchQueryV1",
+      "type": "object"
+    }
+  },
+  "$id": "research-plan.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Model output: bounded search queries. The application enforces the actual limit.",
+  "properties": {
+    "queries": {
+      "items": {
+        "$ref": "#/$defs/ResearchQueryV1"
+      },
+      "maxItems": 8,
+      "title": "Queries",
+      "type": "array"
+    },
+    "skipped_questions": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 8,
+      "title": "Skipped Questions",
+      "type": "array"
+    }
+  },
+  "required": [
+    "queries",
+    "skipped_questions"
+  ],
+  "title": "ResearchPlanV1",
+  "type": "object"
+}

@@ -1,5 +1,5 @@
 // Presentational only; types-only imports keep zod and server code out of the client bundle.
-import type { DecisionBrief, GenerationSummary } from "@/lib/domain/types";
+import type { DecisionBrief, EvidenceClaim, EvidenceSource, GenerationSummary, RunEvidence } from "@/lib/domain/types";
 
 const PROVIDER_NAMES: Record<string, string> = { openai: "OpenAI" };
 const LABELS: Record<string, string> = {
@@ -23,7 +23,56 @@ function List({ items }: { items: string[] }) {
   return items.length ? <ul className="brief-list">{items.map((item, i) => <li key={i}>{item}</li>)}</ul> : <p className="brief-empty">None stated.</p>;
 }
 
-export function DecisionBriefView({ brief }: { brief: DecisionBrief }) {
+const VERDICT: Record<string, string> = {
+  supported: "supported", partially_supported: "partly supported", not_supported: "not supported", quote_not_found: "quote not found"
+};
+
+/** Only https URLs reach this point (validated server-side); links never pass a referrer or ranking signal. */
+function SourceItem({ source, claims, cited }: { source: EvidenceSource; claims: EvidenceClaim[]; cited: string | undefined }) {
+  const quotes = claims.flatMap(c =>
+    c.links.filter(l => l.sourceId === source.sourceId && (l.verdict === "supported" || l.verdict === "partially_supported"))
+      .map(l => ({ claim: c, link: l })));
+  const meta = [source.publisher ?? source.domain, source.publishedAt ? `published ${source.publishedAt.slice(0, 10)}` : "date unknown",
+    `read ${source.retrievedAt.slice(0, 10)}`].join(" · ");
+  return (
+    <li className="source-item">
+      <span className="source-id">{source.sourceId}</span>
+      <div>
+        <a href={source.url} target="_blank" rel="noopener noreferrer nofollow">{source.title}</a>
+        <small>{meta}</small>
+        {cited && <p className="source-cited">Cited for: {cited}</p>}
+        {quotes.map(({ claim, link }) =>
+          <blockquote key={`${claim.claimId}-${link.passageId}`}>
+            “{link.quote}”
+            <small>{link.relation === "contradicts" ? "Contradicts" : "Supports"} {claim.claimId}: {claim.text} · {VERDICT[link.verdict]}
+              {claim.freshness === "stale" ? " · stale source" : ""}{claim.contradicted ? " · sources disagree on this claim" : ""}</small>
+          </blockquote>)}
+      </div>
+    </li>
+  );
+}
+
+function EvidenceView({ brief, evidence }: { brief: DecisionBrief; evidence: RunEvidence }) {
+  const cited = new Map(brief.citations.map(c => [c.source_id, c.supports]));
+  const citedSources = evidence.sources.filter(s => cited.has(s.sourceId));
+  const otherSources = evidence.sources.filter(s => !cited.has(s.sourceId));
+  const rejected = evidence.claims.filter(c => c.status === "unsupported" || c.status === "invalid");
+  const verified = evidence.claims.filter(c => c.status === "verified" || c.status === "partial");
+  return (
+    <div className="caveat sources">
+      <strong>Sources ({evidence.sources.length} read · {verified.length} claim{verified.length === 1 ? "" : "s"} verified against them)</strong>
+      {citedSources.length > 0 && <ol className="source-list">{citedSources.map(s =>
+        <SourceItem key={s.sourceId} source={s} claims={evidence.claims} cited={cited.get(s.sourceId)} />)}</ol>}
+      {otherSources.length > 0 && <details><summary>Read but not cited ({otherSources.length})</summary>
+        <ol className="source-list">{otherSources.map(s =>
+          <SourceItem key={s.sourceId} source={s} claims={evidence.claims} cited={undefined} />)}</ol></details>}
+      {rejected.length > 0 && <details><summary>Claims that failed verification ({rejected.length})</summary>
+        <List items={rejected.map(c => `${c.claimId}: ${c.text} (${c.status === "invalid" ? "quote not found in the source" : "not supported by the source"})`)} /></details>}
+    </div>
+  );
+}
+
+export function DecisionBriefView({ brief, evidence }: { brief: DecisionBrief; evidence?: RunEvidence }) {
   return (
     <div className="brief">
       <article className="stage-card brief-wide">
@@ -69,8 +118,9 @@ export function DecisionBriefView({ brief }: { brief: DecisionBrief }) {
           <List items={brief.proposed_memory_updates.map(m => `${m.kind.replace("_", " ")}: ${m.statement}`)} /></div>}
       <div className="caveat"><strong>Limitations</strong>
         <List items={brief.limitations.length ? brief.limitations : ["None stated by the model; treat this as unverified analysis."]} />
-        {brief.citations.length === 0 && <p>No sources were cited: Echiche does not perform research yet.</p>}
+        {brief.citations.length === 0 && <p>No sources are cited in this brief.</p>}
       </div>
+      {evidence && evidence.sources.length > 0 && <EvidenceView brief={brief} evidence={evidence} />}
     </div>
   );
 }

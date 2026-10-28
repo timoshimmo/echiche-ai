@@ -1,0 +1,230 @@
+{
+  "$defs": {
+    "PassageV1": {
+      "additionalProperties": false,
+      "properties": {
+        "passage_id": {
+          "pattern": "^S[0-9]{1,3}\\.p[0-9]{1,2}$",
+          "title": "Passage Id",
+          "type": "string"
+        },
+        "text": {
+          "maxLength": 600,
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "passage_id",
+        "text"
+      ],
+      "title": "PassageV1",
+      "type": "object"
+    },
+    "SearchSummaryV1": {
+      "additionalProperties": false,
+      "properties": {
+        "query": {
+          "maxLength": 400,
+          "title": "Query",
+          "type": "string"
+        },
+        "result_count": {
+          "minimum": 0,
+          "title": "Result Count",
+          "type": "integer"
+        },
+        "status": {
+          "enum": [
+            "ok",
+            "no_results",
+            "failed"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "query",
+        "status",
+        "result_count"
+      ],
+      "title": "SearchSummaryV1",
+      "type": "object"
+    },
+    "SkippedSourceV1": {
+      "additionalProperties": false,
+      "properties": {
+        "domain": {
+          "maxLength": 253,
+          "title": "Domain",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "blocked_robots",
+            "blocked_publisher",
+            "blocked_address",
+            "unsupported_url",
+            "unsupported_type",
+            "too_large",
+            "http_error",
+            "timeout",
+            "fetch_error",
+            "no_text",
+            "duplicate",
+            "irrelevant",
+            "not_attempted"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "domain",
+        "status"
+      ],
+      "title": "SkippedSourceV1",
+      "type": "object"
+    },
+    "SourceRecordV1": {
+      "additionalProperties": false,
+      "properties": {
+        "content_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Content Sha256",
+          "type": "string"
+        },
+        "domain": {
+          "maxLength": 253,
+          "minLength": 1,
+          "title": "Domain",
+          "type": "string"
+        },
+        "passages": {
+          "items": {
+            "$ref": "#/$defs/PassageV1"
+          },
+          "maxItems": 3,
+          "minItems": 1,
+          "title": "Passages",
+          "type": "array"
+        },
+        "published_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Published At"
+        },
+        "publisher": {
+          "anyOf": [
+            {
+              "maxLength": 200,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Publisher"
+        },
+        "retrieved_at": {
+          "title": "Retrieved At",
+          "type": "string"
+        },
+        "search_query": {
+          "maxLength": 400,
+          "title": "Search Query",
+          "type": "string"
+        },
+        "source_id": {
+          "pattern": "^S[0-9]{1,3}$",
+          "title": "Source Id",
+          "type": "string"
+        },
+        "title": {
+          "maxLength": 300,
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        },
+        "url": {
+          "maxLength": 2048,
+          "pattern": "^https://",
+          "title": "Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source_id",
+        "url",
+        "domain",
+        "title",
+        "publisher",
+        "published_at",
+        "retrieved_at",
+        "content_sha256",
+        "search_query",
+        "passages"
+      ],
+      "title": "SourceRecordV1",
+      "type": "object"
+    }
+  },
+  "$id": "evidence-set.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "limitations": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 10,
+      "title": "Limitations",
+      "type": "array"
+    },
+    "provider": {
+      "title": "Provider",
+      "type": "string"
+    },
+    "searches": {
+      "items": {
+        "$ref": "#/$defs/SearchSummaryV1"
+      },
+      "maxItems": 8,
+      "title": "Searches",
+      "type": "array"
+    },
+    "skipped": {
+      "items": {
+        "$ref": "#/$defs/SkippedSourceV1"
+      },
+      "maxItems": 100,
+      "title": "Skipped",
+      "type": "array"
+    },
+    "sources": {
+      "items": {
+        "$ref": "#/$defs/SourceRecordV1"
+      },
+      "maxItems": 12,
+      "title": "Sources",
+      "type": "array"
+    }
+  },
+  "required": [
+    "provider",
+    "searches",
+    "sources",
+    "skipped",
+    "limitations"
+  ],
+  "title": "EvidenceSetV1",
+  "type": "object"
+}

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from echiche_worker import __version__
 from echiche_worker.config import ConfigError, WorkerConfig
 from echiche_worker.llm import OPENAI_PRICES
 from echiche_worker.model_provider import ModelReasoningProvider, ModelSettings
 from echiche_worker.prompts import PromptRegistry, PromptRegistryError
 from echiche_worker.provider import DeterministicProvider, ReasoningProvider
+from echiche_worker.research_pipeline import ResearchSettings
 
 
 def build_provider(config: WorkerConfig) -> ReasoningProvider:
@@ -39,6 +41,26 @@ def build_provider(config: WorkerConfig) -> ReasoningProvider:
             registry,
             OPENAI_PRICES,
             ModelSettings(residency=config.openai_data_residency, max_output_tokens=config.openai_max_output_tokens),
+            research=build_research(config),
         )
     except (PromptRegistryError, ValueError, KeyError) as error:
         raise ConfigError([f"reasoning provider: {error}"]) from error
+
+
+USER_AGENT = f"EchicheResearchBot/{__version__}"
+
+
+def build_research(config: WorkerConfig) -> ResearchSettings | None:
+    if config.research_provider != "brave" or config.brave_api_key is None:
+        return None
+    from echiche_worker.fetch import PageFetcher
+    from echiche_worker.research import BraveSearchClient
+
+    return ResearchSettings(
+        search=BraveSearchClient(config.brave_api_key),
+        fetcher=PageFetcher(USER_AGENT, config.fetch_timeout_seconds, config.fetch_max_bytes),
+        max_queries=config.research_max_queries,
+        results_per_query=config.research_results_per_query,
+        max_pages=config.research_max_pages,
+        stale_days=config.research_stale_days,
+    )

@@ -2,6 +2,8 @@
 import type { RunResult } from "./reasoning";
 
 export type { DecisionBrief, ReasoningResult, ReasoningStage, RunResult } from "./reasoning";
+export type { EvidenceClaim, EvidenceLink, EvidenceSource, RunEvidence } from "./evidence";
+import type { RunEvidence } from "./evidence";
 
 /** Owner is implicit (the signed-in user) and never serialised to clients. */
 export type Project = {
@@ -79,13 +81,14 @@ export type ThoughtRun = {
   completedAt: string | null;
 };
 
-export type ThoughtRunWithEvents = ThoughtRun & { events: RunEvent[] };
+/** GET /api/runs/:id: the run plus its events and research provenance (empty when none). */
+export type ThoughtRunWithEvents = ThoughtRun & { events: RunEvent[]; evidence?: RunEvidence };
 
 /** Safe, user-facing explanations for stable run error codes. */
 export const RUN_ERROR_MESSAGES: Record<string, string> = {
   BUDGET_STEPS: "Paused: the step budget for this run was used up.",
   BUDGET_TIME: "Paused: the processing-time budget for this run was used up.",
-  BUDGET_RESEARCH: "Paused: the research budget for this run was used up.",
+  BUDGET_RESEARCH: "Paused: the search budget for this run was used up. Approve more to let it research.",
   BUDGET_COST: "Paused: the next step could exceed this run's spending budget.",
   PROVIDER_TIMEOUT: "The reasoning service took too long to respond.",
   PROVIDER_UNAVAILABLE: "The reasoning service was temporarily unavailable.",
@@ -96,6 +99,10 @@ export const RUN_ERROR_MESSAGES: Record<string, string> = {
   PROVIDER_AUTH: "The reasoning service rejected this deployment's credentials. An operator needs to fix the configuration.",
   PROVIDER_REQUEST_INVALID: "The reasoning service rejected the request configuration.",
   PROVIDER_ERROR: "The reasoning service failed to process this run.",
+  RESEARCH_UNAVAILABLE: "The research service was temporarily unavailable; the run will retry automatically.",
+  RESEARCH_RATE_LIMITED: "The research service is busy; the run will retry automatically.",
+  RESEARCH_AUTH: "The research service rejected this deployment's credentials. An operator needs to fix the configuration.",
+  RESEARCH_ERROR: "The research service rejected the request.",
   REASONING_MODE_MISMATCH: "This run was started in a different reasoning mode and cannot be continued.",
   RESULT_INVALID: "The final result failed validation and was not saved.",
   CHECKPOINT_INVALID: "Saved progress for this run could not be read.",

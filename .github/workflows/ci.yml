@@ -141,4 +141,5 @@ jobs:
       - run: >-
           docker run --rm -e DATABASE_URL=postgresql://w:placeholder@db.invalid/postgres
           -e REASONING_PROVIDER=openai -e OPENAI_API_KEY=sk-ci-placeholder-not-a-key
+          -e RESEARCH_PROVIDER=brave -e BRAVE_SEARCH_API_KEY=brave-ci-placeholder-not-a-key
           echiche-worker:ci /app/.venv/bin/echiche-worker --check-config

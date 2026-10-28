@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type {
-  CreateProjectInput, Project, RunBudget, RunEvent, StartRunInput, ThoughtRun, UpdateProjectInput
+  CreateProjectInput, Project, RunBudget, RunEvent, RunEvidence, StartRunInput, ThoughtRun, UpdateProjectInput
 } from "@/lib/domain/types";
 import {
   ACTIVE_STATUSES, assertOwnerId, IdempotencyConflictError, ProjectArchivedError, RateLimitError, RunStateError,
@@ -20,6 +20,7 @@ export class MemoryStore implements Store {
   readonly projects = new Map<string, Owned<Project>>();
   readonly runs = new Map<string, StoredRun>();
   readonly events = new Map<string, RunEvent[]>();
+  readonly evidence = new Map<string, RunEvidence>();
 
   forOwner(ownerId: string): OwnerScopedRepository {
     assertOwnerId(ownerId);
@@ -144,6 +145,10 @@ class MemoryOwnerRepository implements OwnerScopedRepository {
   }
   async listEvents(runId: string): Promise<RunEvent[]> {
     return this.ownRun(runId) ? [...(this.store.events.get(runId) ?? [])] : [];
+  }
+  async getEvidence(runId: string): Promise<RunEvidence> {
+    const evidence = this.ownRun(runId) ? this.store.evidence.get(runId) : undefined;
+    return evidence ?? { sources: [], claims: [] };
   }
   async cancelRun(runId: string): Promise<ThoughtRun | null> {
     const run = this.ownRun(runId);

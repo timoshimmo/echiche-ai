@@ -40,6 +40,9 @@ See `RUN_ERROR_MESSAGES` in `src/lib/domain/types.ts` (user-facing text) and the
 - **Repeated `PROVIDER_TIMEOUT` / `PROVIDER_UNAVAILABLE` / `PROVIDER_RATE_LIMITED`:** a provider outage or a rate limit. Runs requeue with backoff and fail after `max_attempts`.
 - **`PROVIDER_AUTH`:** the worker's `OPENAI_API_KEY` is wrong, revoked or out of quota. Fix the key, then start the affected runs again.
 - **`INVALID_PROVIDER_OUTPUT`:** the model failed its contract twice (once after repair). Repeated failures for one prompt version suggest a prompt or contract regression.
+- **`RESEARCH_UNAVAILABLE` / `RESEARCH_RATE_LIMITED`:** Brave outage or rate limit. Runs requeue; on their last attempt they continue without that evidence and say so in the brief.
+- **`RESEARCH_AUTH`:** the worker's `BRAVE_SEARCH_API_KEY` is wrong or revoked.
+- **`BUDGET_RESEARCH`:** the run used its search budget before researching; the user can approve more.
 - **`BUDGET_COST`:** the next call's worst case would exceed the run's cap. The user can approve more budget; raise `RUN_BUDGET_MAX_COST_USD` on the web service if this is common.
 - **`INTERNAL_ERROR`:** a bug. Search the worker logs for `run_internal_error` with the `run_id`.
 
@@ -57,4 +60,23 @@ select id, status, error_code, cost_usd_used, budget_max_cost_usd
   from echiche.thought_runs
  where budget_max_cost_usd > 0 and cost_usd_used >= 0.8 * budget_max_cost_usd
  order by updated_at desc limit 50;
+```
+
+## Research health (M5)
+```sql
+-- Search and fetch outcomes per day (no query text or content is stored)
+select date_trunc('day', created_at) as day, kind, provider, outcome, count(*) as n, sum(cost_usd) as usd
+  from echiche.research_calls
+ group by 1, 2, 3, 4
+ order by 1 desc, n desc;
+
+-- Domains most often blocked or failing (robots.txt, opt-outs, timeouts)
+select domain, outcome, count(*) as n
+  from echiche.research_calls
+ where kind in ('fetch', 'robots') and outcome <> 'ok'
+ group by 1, 2 order by n desc limit 50;
+
+-- Verification quality: claim statuses per day
+select date_trunc('day', created_at) as day, status, count(*) as n
+  from echiche.claims group by 1, 2 order by 1 desc;
 ```

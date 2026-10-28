@@ -5,8 +5,9 @@ machine, budgets, model/research adapters, critic/verifier, synthesis and memory
 proposals. Communicates with the TypeScript web app only through database rows and
 versioned JSON contracts in ``contracts/``.
 
-M4 status: durable runs (M3) plus a model-backed reasoning provider (OpenAI adapter,
-prompt registry, structured outputs, spend caps); research arrives in M5.
+M5 status: durable runs (M3), a model-backed reasoning provider (M4), and research with
+provenance: Brave discovery, pages fetched and read by the worker itself, claims tied to
+exact quotes and independently verified (M5).
 """
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"

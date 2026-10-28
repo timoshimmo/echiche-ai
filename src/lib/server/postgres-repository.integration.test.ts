@@ -204,10 +204,36 @@ describe("end to end across languages (ADR-001 D8): web queues → Python worker
     expect(done.result.data.citations).toEqual([]);
     expect(done.generation).toMatchObject({ mode: "model", providers: ["openai"], calls: 3, repairs: 0 });
     expect(done.generation.prompts.sort()).toEqual(
-      ["decision-brief-synthesis@2.0.0", "decision-critic@2.0.0", "decision-framing@2.0.0"]
+      ["decision-brief-synthesis@2.1.0", "decision-critic@2.1.0", "decision-framing@2.0.0"]
     );
     expect(done.generation.costUsd).toBeGreaterThan(0);
     expect(done.usage.costUsd).toBeGreaterThanOrEqual(done.generation.costUsd);
     expect(await bobRepo.getRun(run.id)).toBeNull();
+  });
+
+  it("reads research provenance through RLS: sources, verified quotes, citations (local TLS site, no network)", async () => {
+    const { repo, run } = await aliceRun();
+    const worker = spawnSync("uv", ["run", "--no-sync", "--directory", workerDir, "python", "-m", "tests.e2e_fake_model", "--research"], {
+      env: { ...process.env, DATABASE_URL: workerUrl }, encoding: "utf8", timeout: 120_000
+    });
+    expect(worker.status, worker.stderr).toBe(0);
+
+    const done = await repo.getRun(run.id);
+    if (done?.result?.schemaVersion !== "decision-brief.v1") throw new Error("expected a decision brief");
+    expect(done.usage.researchCalls).toBe(2);
+    const evidence = await repo.getEvidence(run.id);
+    expect(evidence.sources.map(s => s.domain)).toEqual(["survey.test", "forum.test", "pilots.test"]);
+    expect(evidence.sources.every(s => s.url.startsWith("https://") && s.passages.length >= 1)).toBe(true);
+    // Every citation in the brief resolves to a stored source with a verified, supporting quote.
+    for (const citation of done.result.data.citations) {
+      const source = evidence.sources.find(s => s.sourceId === citation.source_id);
+      expect(source, citation.source_id).toBeDefined();
+      const backed = evidence.claims.some(c => c.status === "verified" && c.links.some(l =>
+        l.sourceId === citation.source_id && l.verdict === "supported" &&
+        source!.passages.some(p => p.text.toLowerCase().includes(l.quote.toLowerCase().slice(0, 40)))));
+      expect(backed, citation.source_id).toBe(true);
+    }
+    expect(evidence.claims.some(c => c.contradicted)).toBe(true);
+    expect(await store.forOwner(bob).getEvidence(run.id)).toEqual({ sources: [], claims: [] });
   });
 });

@@ -20,16 +20,20 @@ from psycopg.rows import DictRow, dict_row
 from pydantic import BaseModel, ValidationError
 
 from echiche_worker.contracts import (
-    MODEL_OUTPUTS,
+    EVIDENCE_SET_SCHEMA_VERSION,
+    STAGE_DATA,
     STAGE_OUTPUT_SCHEMA_VERSION,
     STAGE_OUTPUT_V2_SCHEMA_VERSION,
     STAGES,
+    VERIFICATION_REPORT_SCHEMA_VERSION,
+    EvidenceSetV1,
     Stage,
     StageOutput,
     StageOutputV1,
     StageOutputV2,
+    VerificationReportV1,
 )
-from echiche_worker.provider import ModelCallRecord
+from echiche_worker.provider import ModelCallRecord, ResearchCallRecord
 
 ACTIVE = ("planning", "researching", "critiquing", "verifying", "synthesizing")
 Row = DictRow
@@ -205,7 +209,7 @@ class RunStore:
                 elif version == STAGE_OUTPUT_V2_SCHEMA_VERSION:
                     output = StageOutputV2.model_validate(row["output"])
                     if output.data_schema is not None or output.data is not None:
-                        contract = MODEL_OUTPUTS.get(output.data_schema or "")
+                        contract = STAGE_DATA.get(output.data_schema or "")
                         if contract is None or output.data is None:
                             raise CorruptCheckpointError(f"unknown data contract for {row['stage']}")
                         contract.model_validate(output.data)
@@ -272,16 +276,67 @@ class RunStore:
                 ),
             )  # fmt: skip
 
-    def record_calls(self, run: ClaimedRun, calls: Sequence[ModelCallRecord]) -> None:
+    def _insert_research_calls(self, run: ClaimedRun, calls: Sequence[ResearchCallRecord]) -> None:
+        for c in calls:
+            self.conn.execute(
+                """insert into echiche.research_calls
+                     (owner_user_id, run_id, attempt, kind, provider, outcome, http_status, domain, result_count, bytes,
+                      cost_usd, latency_ms)
+                   values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                (
+                    run.owner_user_id, run.id, run.attempt, c.kind, c.provider, c.outcome[:32], c.http_status,
+                    c.domain, c.result_count, c.bytes, c.cost_usd, c.latency_ms,
+                ),
+            )  # fmt: skip
+
+    def _insert_sources(self, run: ClaimedRun, evidence: EvidenceSetV1) -> None:
+        for s in evidence.sources:
+            self.conn.execute(
+                """insert into echiche.sources
+                     (owner_user_id, run_id, source_key, url, domain, title, publisher, published_at, retrieved_at,
+                      content_sha256, search_query, passages)
+                   values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)""",
+                (
+                    run.owner_user_id, run.id, s.source_id, s.url, s.domain, s.title, s.publisher, s.published_at,
+                    s.retrieved_at, s.content_sha256, s.search_query,
+                    json.dumps([p.model_dump(mode="json") for p in s.passages]),
+                ),
+            )  # fmt: skip
+
+    def _insert_claims(self, run: ClaimedRun, report: VerificationReportV1) -> None:
+        for c in report.claims:
+            row = self.conn.execute(
+                """insert into echiche.claims (owner_user_id, run_id, claim_key, text, label, status, freshness,
+                                               contradicted)
+                   values (%s, %s, %s, %s, %s, %s, %s, %s) returning id""",
+                (run.owner_user_id, run.id, c.claim_id, c.text, c.label, c.status, c.freshness,
+                 c.claim_id in report.contradictions),
+            ).fetchone()  # fmt: skip
+            if row is None:  # pragma: no cover - INSERT ... RETURNING always returns the row
+                raise LeaseLostError(run.id)
+            for e in c.evidence:
+                self.conn.execute(
+                    """insert into echiche.claim_sources
+                         (claim_id, source_id, owner_user_id, passage_key, relation, quote, verdict, note)
+                       select %s, s.id, %s, %s, %s, %s, %s, %s
+                         from echiche.sources s where s.run_id = %s and s.source_key = %s
+                       on conflict (claim_id, passage_key) do nothing""",
+                    (row["id"], run.owner_user_id, e.passage_id, e.relation, e.quote[:500], e.verdict, e.note[:500],
+                     run.id, e.source_id),
+                )  # fmt: skip
+
+    def record_calls(
+        self, run: ClaimedRun, calls: Sequence[ModelCallRecord], research_calls: Sequence[ResearchCallRecord] = ()
+    ) -> None:
         """Persists telemetry and counts the spend of calls whose stage did not complete
         (failure, retry, pause), so a failing run still consumes its cost budget."""
-        if not calls:
+        if not calls and not research_calls:
             return
+        total = sum((c.cost_usd for c in calls), Decimal(0)) + sum((c.cost_usd for c in research_calls), Decimal(0))
         with self.conn.transaction():
-            self._guarded_update(
-                run.id, "cost_usd_used = cost_usd_used + %s", (spend(sum((c.cost_usd for c in calls), Decimal(0))),)
-            )
+            self._guarded_update(run.id, "cost_usd_used = cost_usd_used + %s", (spend(total),))
             self._insert_calls(run, calls)
+            self._insert_research_calls(run, research_calls)
 
     def commit_stage(
         self,
@@ -291,8 +346,10 @@ class RunStore:
         research_calls: int,
         cost_usd: Decimal,
         calls: Sequence[ModelCallRecord] = (),
+        research_records: Sequence[ResearchCallRecord] = (),
     ) -> Usage:
-        """cost_usd must include the cost of `calls`; both are written in one transaction."""
+        """cost_usd must include the cost of `calls` and `research_records`. The checkpoint,
+        usage, telemetry, and any sources or claims it carries are written in one transaction."""
         output = to_v2(output)
         with self.conn.transaction():
             inserted = self.conn.execute(
@@ -324,6 +381,11 @@ class RunStore:
                     (Decimal(duration_ms) / 1000, research_calls, spend(cost_usd), self.lease_seconds),
                 )
                 self._insert_calls(run, calls)
+                self._insert_research_calls(run, research_records)
+                if output.data_schema == EVIDENCE_SET_SCHEMA_VERSION and output.data is not None:
+                    self._insert_sources(run, EvidenceSetV1.model_validate(output.data))
+                elif output.data_schema == VERIFICATION_REPORT_SCHEMA_VERSION and output.data is not None:
+                    self._insert_claims(run, VerificationReportV1.model_validate(output.data))
                 self._event(run, "stage", output.stage, f"{output.title}: completed")
         return _claimed(row).usage
 

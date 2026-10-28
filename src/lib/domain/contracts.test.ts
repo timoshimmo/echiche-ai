@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
+import { evidenceClaimSchema, evidenceSourceSchema } from "./evidence";
 import { decisionBriefSchema, parseRunResult, reasoningResultSchema } from "./reasoning";
 
 // Cross-language contract check (ADR-001 D1). The JSON Schemas are generated from the worker's
@@ -68,5 +69,31 @@ describe("parseRunResult", () => {
     expect(parseRunResult("decision-brief.v1", scaffold)).toBeNull();
     expect(parseRunResult("decision-brief.v2", brief)).toBeNull();
     expect(parseRunResult(null, brief)).toBeNull();
+  });
+});
+
+describe("research evidence rows (M5)", () => {
+  const source = {
+    sourceId: "S1", url: "https://survey.example/report", domain: "survey.example", title: "Report", publisher: null,
+    publishedAt: "2026-05-14", retrievedAt: "2026-10-28T10:00:00Z",
+    passages: [{ passage_id: "S1.p1", text: "Clinics pay a median of 89 dollars per month." }]
+  };
+  it("accepts a well-formed source and rejects non-https links, bad IDs and oversize passages", () => {
+    expect(evidenceSourceSchema.safeParse(source).success).toBe(true);
+    for (const bad of [
+      { ...source, url: "http://survey.example/report" },
+      { ...source, url: "javascript:alert(1)" },
+      { ...source, sourceId: "X1" },
+      { ...source, passages: [{ passage_id: "S1.p1", text: "x".repeat(601) }] },
+      { ...source, passages: [] }
+    ]) expect(evidenceSourceSchema.safeParse(bad).success).toBe(false);
+  });
+  it("accepts a claim with links and rejects unknown verdicts", () => {
+    const claim = {
+      claimId: "C1", text: "Clinics pay.", label: "fact", status: "verified", freshness: "fresh", contradicted: false,
+      links: [{ sourceId: "S1", passageId: "S1.p1", relation: "supports", quote: "median of 89 dollars", verdict: "supported", note: "ok" }]
+    };
+    expect(evidenceClaimSchema.safeParse(claim).success).toBe(true);
+    expect(evidenceClaimSchema.safeParse({ ...claim, links: [{ ...claim.links[0], verdict: "true" }] }).success).toBe(false);
   });
 });

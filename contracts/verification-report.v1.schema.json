@@ -1,0 +1,159 @@
+{
+  "$defs": {
+    "VerifiedClaimV1": {
+      "additionalProperties": false,
+      "properties": {
+        "claim_id": {
+          "title": "Claim Id",
+          "type": "string"
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/VerifiedEvidenceV1"
+          },
+          "title": "Evidence",
+          "type": "array"
+        },
+        "freshness": {
+          "enum": [
+            "fresh",
+            "stale",
+            "unknown"
+          ],
+          "title": "Freshness",
+          "type": "string"
+        },
+        "label": {
+          "enum": [
+            "fact",
+            "inference",
+            "hypothesis",
+            "speculation",
+            "unknown"
+          ],
+          "title": "Label",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "verified",
+            "partial",
+            "unsupported",
+            "invalid"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "claim_id",
+        "text",
+        "label",
+        "status",
+        "freshness",
+        "evidence"
+      ],
+      "title": "VerifiedClaimV1",
+      "type": "object"
+    },
+    "VerifiedEvidenceV1": {
+      "additionalProperties": false,
+      "properties": {
+        "note": {
+          "title": "Note",
+          "type": "string"
+        },
+        "passage_id": {
+          "title": "Passage Id",
+          "type": "string"
+        },
+        "quote": {
+          "title": "Quote",
+          "type": "string"
+        },
+        "relation": {
+          "enum": [
+            "supports",
+            "contradicts",
+            "context"
+          ],
+          "title": "Relation",
+          "type": "string"
+        },
+        "source_id": {
+          "title": "Source Id",
+          "type": "string"
+        },
+        "verdict": {
+          "enum": [
+            "supported",
+            "partially_supported",
+            "not_supported",
+            "quote_not_found"
+          ],
+          "title": "Verdict",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source_id",
+        "passage_id",
+        "relation",
+        "quote",
+        "verdict",
+        "note"
+      ],
+      "title": "VerifiedEvidenceV1",
+      "type": "object"
+    }
+  },
+  "$id": "verification-report.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "claims": {
+      "items": {
+        "$ref": "#/$defs/VerifiedClaimV1"
+      },
+      "maxItems": 15,
+      "title": "Claims",
+      "type": "array"
+    },
+    "contradictions": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 15,
+      "title": "Contradictions",
+      "type": "array"
+    },
+    "limitations": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 10,
+      "title": "Limitations",
+      "type": "array"
+    },
+    "unverifiable": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 20,
+      "title": "Unverifiable",
+      "type": "array"
+    }
+  },
+  "required": [
+    "claims",
+    "contradictions",
+    "unverifiable",
+    "limitations"
+  ],
+  "title": "VerificationReportV1",
+  "type": "object"
+}

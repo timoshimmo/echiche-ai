@@ -6,6 +6,13 @@ Two reasoning providers sit behind `ReasoningProvider` ([ADR-007](../docs/decisi
 - **`deterministic`** (default): the demo scaffold. No model, no network, no cost.
 - **`openai`**: model-backed framing, critique and synthesis. It uses versioned prompts from `prompts/runtime/`, strict structured outputs, one repair attempt, a citation guard, per-run spend caps and per-call telemetry in `echiche.model_calls`.
 
+Research is optional ([ADR-008](../docs/decisions/008-research-provenance-and-verification.md)). With `RESEARCH_PROVIDER=brave`:
+- Brave finds candidate pages; its results are never stored.
+- `fetch.py` reads the pages under strict guards.
+- `passages.py` keeps short relevant passages.
+- The verifying stage checks every quote against the stored passage, then has the model judge support independently.
+- Sources, claims and research telemetry go to `echiche.sources`, `echiche.claims` / `claim_sources` and `echiche.research_calls`.
+
 ## Setup
 
 Requires [uv](https://docs.astral.sh/uv/) and Python 3.12.
@@ -29,6 +36,8 @@ DATABASE_URL=... uv run echiche-worker --check-config                           
 
 # Opt-in, REAL and billed: one framing call with your own key (never in CI)
 ECHICHE_LIVE_OPENAI=1 OPENAI_API_KEY=... uv run pytest -m live -s
+# Opt-in, REAL: one Brave search plus page fetches through the production guards
+ECHICHE_LIVE_BRAVE=1 BRAVE_SEARCH_API_KEY=... uv run pytest -m live -s -k research
 ```
 
 Docker (same image Render builds; context is the repo root because the image includes `prompts/runtime`): from the repo root, `docker build -f worker/Dockerfile -t echiche-worker . && docker run --env-file .env.worker echiche-worker`.
@@ -49,6 +58,14 @@ Docker (same image Render builds; context is the repo root because the image inc
 | `OPENAI_DATA_RESIDENCY` | no | `global` | `global` or `eu` (`eu` needs OpenAI's approval; +10% price) |
 | `OPENAI_MAX_OUTPUT_TOKENS` | no | `4000` | 256–32000; also the output term of the worst-case cost check |
 | `ECHICHE_PROMPTS_DIR` | no | `<repo>/prompts/runtime` | Set in the Docker image |
+| `RESEARCH_PROVIDER` | no | `none` | `none` or `brave` (`brave` requires `REASONING_PROVIDER=openai`) |
+| `BRAVE_SEARCH_API_KEY` | with `brave` | — | Secret. Worker only; redacted from config output |
+| `RESEARCH_MAX_QUERIES` | no | `3` | 1–8 searches per run, also capped by the run's research budget |
+| `RESEARCH_RESULTS_PER_QUERY` | no | `5` | 1–20 candidate URLs per search |
+| `RESEARCH_MAX_PAGES` | no | `6` | 1–12 sources kept per run |
+| `FETCH_TIMEOUT_SECONDS` | no | `8` | 1–30, per page (robots.txt included) |
+| `FETCH_MAX_BYTES` | no | `2000000` | 10 KB–10 MB, enforced while reading |
+| `RESEARCH_STALE_DAYS` | no | `730` | Sources older than this mark a claim as stale |
 
 ## Layout
 
@@ -61,6 +78,10 @@ Docker (same image Render builds; context is the repo root because the image inc
 | `openai_adapter.py` | OpenAI Responses API adapter (`store=False`, no SDK retries, strict schema, error mapping) |
 | `model_provider.py` | Model pipeline: stages, validation, one repair, citation guard, budget preflight |
 | `factory.py` | Builds the configured provider; every problem is a start-up `CONFIG_INVALID` |
+| `research.py` | Search port and Brave adapter; research errors and call records |
+| `fetch.py` | Safe page fetcher: https, public addresses with pinned connections, robots.txt, publisher opt-outs, limits, text and metadata extraction |
+| `passages.py` | Passage splitting and selection (lexical, deterministic), quote matching |
+| `research_pipeline.py` | Evidence gathering, the claim/judgment guards, and the deterministic verification report |
 | `retry.py` | Bounded retry with full-jitter backoff (transient errors only) |
 | `store.py` | Lease-guarded Postgres reads and writes; transactional checkpoints |
 | `executor.py` | One run: resume, cancel and budget checks, stage calls, failure policy |

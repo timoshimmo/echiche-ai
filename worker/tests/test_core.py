@@ -171,3 +171,10 @@ ZERO = Usage(steps=0, active_seconds=Decimal(0), research_calls=0, cost_usd=Deci
 )
 def test_budget_exceeded(usage: Usage, code: str | None) -> None:
     assert budget_exceeded(run_with(BUDGET, usage), usage) == code
+
+
+def test_research_cap_only_blocks_the_research_stage() -> None:
+    used = Usage(steps=1, active_seconds=Decimal(1), research_calls=2, cost_usd=Decimal(0))
+    run = run_with(BUDGET, used)
+    assert budget_exceeded(run, used, "researching") == "BUDGET_RESEARCH"
+    assert budget_exceeded(run, used, "critiquing") is None

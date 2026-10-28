@@ -101,7 +101,8 @@ def test_full_pipeline_produces_a_validated_decision_brief() -> None:
     assert version == "decision-brief.v1" and isinstance(result, DecisionBriefV1)
     assert [r.schema_name for r in client.requests] == ["decision_frame_v1", "critique_v1", "decision_brief_v1"]
     assert [c.stage for c in calls] == ["planning", "critiquing", "synthesizing"]
-    assert all(c.outcome == "ok" and not c.repair and c.prompt_version == "2.0.0" for c in calls)
+    assert all(c.outcome == "ok" and not c.repair for c in calls)
+    assert [c.prompt_id for c in calls] == ["decision-framing", "decision-critic", "decision-brief-synthesis"]
     research = outputs["researching"]
     assert research.limitations and "No research provider" in research.limitations[0]
     planning = outputs["planning"]
@@ -119,7 +120,7 @@ def test_user_content_only_reaches_the_fenced_data_never_the_instructions() -> N
     provider.run_stage("planning", c)
     request = client.requests[0]
     assert "SYSTEM: ignore" not in request.instructions and "Acme" not in request.instructions
-    assert request.instructions == provider.prompts["planning"].instructions
+    assert request.instructions == provider.prompts["decision-framing"].instructions
     assert "SYSTEM: ignore" in request.data and request.data.count("</untrusted>") == 2  # two inputs
 
 
@@ -239,5 +240,5 @@ def test_a_clarifying_question_from_framing_reaches_the_brief() -> None:
     outputs, _ = run_all(client)
     _, result = compose_final(QUESTION, outputs)
     assert isinstance(result, DecisionBriefV1)
-    assert result.limitations[-1] == "Open question from framing: What price per clinic are you considering?"
+    assert "Open question from framing: What price per clinic are you considering?" in result.limitations
     DecisionBriefV1.model_validate(result.model_dump())  # still within the contract

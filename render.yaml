@@ -57,3 +57,13 @@ services:
         value: global
       - key: OPENAI_MAX_OUTPUT_TOKENS
         value: "4000"
+      # Research (ADR-008). "none" = no web research. "brave" needs REASONING_PROVIDER=openai
+      # and BRAVE_SEARCH_API_KEY (Render dashboard, never in git).
+      - key: RESEARCH_PROVIDER
+        value: none
+      - key: BRAVE_SEARCH_API_KEY
+        sync: false
+      - key: RESEARCH_MAX_QUERIES       # searches per run (also capped by the run's research budget)
+        value: "3"
+      - key: RESEARCH_MAX_PAGES         # pages kept as sources per run
+        value: "6"

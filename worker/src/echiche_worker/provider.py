@@ -98,6 +98,24 @@ class ModelCallRecord:
     latency_ms: int
 
 
+ResearchKind = Literal["search", "fetch", "robots"]
+
+
+@dataclass(frozen=True, slots=True)
+class ResearchCallRecord:
+    """Telemetry for one search or fetch (echiche.research_calls). No query text, no content."""
+
+    kind: ResearchKind
+    provider: str
+    outcome: str
+    http_status: int | None
+    domain: str | None
+    result_count: int
+    bytes: int
+    cost_usd: Decimal
+    latency_ms: int
+
+
 @dataclass(frozen=True, slots=True)
 class StageContext:
     run_id: str
@@ -109,9 +127,17 @@ class StageContext:
     # Providers append one record per model call, including failed ones, so the
     # executor can persist telemetry and count spend whatever the outcome.
     calls: list[ModelCallRecord] = field(default_factory=list[ModelCallRecord])
+    research_calls: list[ResearchCallRecord] = field(default_factory=list[ResearchCallRecord])
+    # Research limits for this stage: searches still allowed by the run's budget, and whether
+    # this is the last attempt (then a failing search provider degrades to "no evidence",
+    # with an explicit limitation, instead of failing the run).
+    remaining_research_calls: int = 0
+    final_attempt: bool = False
 
     def spent_usd(self) -> Decimal:
-        return sum((c.cost_usd for c in self.calls), Decimal("0"))
+        return sum((c.cost_usd for c in self.calls), Decimal("0")) + sum(
+            (c.cost_usd for c in self.research_calls), Decimal("0")
+        )
 
 
 @dataclass(frozen=True, slots=True)

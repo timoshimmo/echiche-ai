@@ -17,6 +17,7 @@ ADR-005 hosting, ADR-006 runs. First complete [supabase-setup.md](supabase-setup
    | web | `APP_ORIGIN` | `https://echiche-web.onrender.com`, or your custom domain once attached |
    | worker | `DATABASE_URL` | Supabase pooler URL as **`echiche_worker.<project-ref>`** |
    | worker | `OPENAI_API_KEY` | Leave **empty** until you enable live reasoning (below). Never set it on the web service: it refuses to start. |
+   | worker | `BRAVE_SEARCH_API_KEY` | Leave **empty** until you enable research (below). |
 
 4. **Point Supabase at the app:** in Supabase Auth URL settings, set the Site URL to `APP_ORIGIN` and add `<APP_ORIGIN>/auth/callback` to the redirect URLs.
 5. **Workspace plan:** Hobby (free) workspace is fine to start. Upgrade to Pro ($25 flat) for preview environments; then set `previews` in `render.yaml`.
@@ -50,6 +51,16 @@ Paid calls start only after these steps; until then the worker runs the determin
 5. Optional, from your machine: run the one-call live smoke test (`cd worker && ECHICHE_LIVE_OPENAI=1 OPENAI_API_KEY=… uv run pytest -m live -s`, cost < $0.05).
 
 **To switch back** to demo mode, set `REASONING_PROVIDER=deterministic`. Runs already in progress with model checkpoints then fail with `REASONING_MODE_MISMATCH`; start them again.
+
+## Enabling research (Brave, ADR-008)
+Research requires live reasoning (above).
+1. **Licensing:** before real users, get Brave's written confirmation that the plan you choose allows using search results transiently to find pages, and confirm you are comfortable keeping short excerpts of publisher pages (at most 3 × 500 characters per source, robots.txt and `noarchive`/`noai` honoured). This is a licensing question, not legal advice.
+2. **Key:** in the Brave Search API dashboard, create a key on the Search plan ($5 per 1,000 searches; $5 free credit each month, as of 2026-10-28). Set a spend limit there if available.
+3. **Worker settings:** on **`echiche-worker`** only, set `BRAVE_SEARCH_API_KEY`, then `RESEARCH_PROVIDER=brave`. The defaults allow 3 searches and keep at most 6 sources per run; each run's search budget (`RUN_BUDGET_MAX_RESEARCH_CALLS` on the web service, default 8) also caps searches.
+4. **Check:** the start-up log shows `"provider":"openai:<model>+brave"`. A rejected key fails runs with `RESEARCH_AUTH`.
+5. **Optional smoke test:** run the live research test from your machine (`cd worker && ECHICHE_LIVE_BRAVE=1 BRAVE_SEARCH_API_KEY=… uv run pytest -m live -s -k research`).
+
+The worker fetches pages from the public web as `EchicheResearchBot/<version>`. Render's outbound network needs no extra configuration.
 
 ## Scaling and shutdown
 - **More throughput:** increase the worker's instance count. Claims are safe under concurrency (`SKIP LOCKED` plus leases), and each instance gets a unique `WORKER_ID` from its hostname.

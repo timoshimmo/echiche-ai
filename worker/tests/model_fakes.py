@@ -10,6 +10,7 @@ from typing import Any
 from echiche_worker.llm import OPENAI_PRICES, ModelCallError, ModelReply, ModelRequest, TokenUsage
 from echiche_worker.model_provider import ModelReasoningProvider, ModelSettings
 from echiche_worker.prompts import PromptRegistry
+from echiche_worker.research_pipeline import ResearchSettings
 
 FIXTURES = Path(__file__).resolve().parents[2] / "contracts" / "fixtures"
 USAGE = TokenUsage(input_tokens=1200, cached_input_tokens=200, output_tokens=600, reasoning_tokens=100)
@@ -56,11 +57,15 @@ class FakeModelClient:
 
 
 def model_provider(
-    client: FakeModelClient | None = None, residency: str = "global", max_output_tokens: int = 4000
+    client: FakeModelClient | None = None,
+    residency: str = "global",
+    max_output_tokens: int = 4000,
+    research: ResearchSettings | None = None,
 ) -> ModelReasoningProvider:
     return ModelReasoningProvider(
         client or FakeModelClient(),
         PromptRegistry.load(),
         OPENAI_PRICES,
         ModelSettings(residency=residency, max_output_tokens=max_output_tokens),
+        research=research,
     )
