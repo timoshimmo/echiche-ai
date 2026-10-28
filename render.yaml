@@ -11,7 +11,10 @@ services:
     name: echiche-web
     runtime: node
     region: frankfurt
-    plan: 1c-2g
+    # Free (0.1 CPU, 512 MB; measured ~230 MB in use): sleeps after 15 minutes without traffic and
+    # takes about a minute to wake. Fine for staging. For partners, use 0.5c-512mb (Starter, $7/month)
+    # so nobody waits for a cold start, or 1c-2g (Standard, $25) as originally planned (ADR-005).
+    plan: free
     buildCommand: npm ci && npm run build
     startCommand: npm start
     healthCheckPath: /api/ready
@@ -38,6 +41,7 @@ services:
     name: echiche-worker
     runtime: docker
     region: frankfurt
+    # Background workers have no free plan on Render: Starter ($7/month) is the smallest.
     plan: 0.5c-512mb
     dockerfilePath: ./worker/Dockerfile
     dockerContext: .            # repo root: the image also contains prompts/runtime

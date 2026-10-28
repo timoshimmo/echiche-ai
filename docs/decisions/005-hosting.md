@@ -38,6 +38,7 @@
   - Price steps are coarse (2 GB at $25 to 4 GB at $85).
   - Included bandwidth is small (5 GB Hobby / 25 GB Pro, then $0.15/GB). Acceptable for a text-centric app; monitor it.
 - **Cost (planning estimate, not a quote):** about $32/month compute, plus a $25 Pro workspace if previews are wanted, plus Supabase.
+- **Update 2026-10-28 (decision owner):** staging starts on the cheapest viable setup: web on `free` (measured about 230 MB in use, within its 512 MB; it sleeps when idle) and worker on Starter, $7/month in total. Revisit before inviting partners.
 - **Portability:**
   - The worker is a standard container image.
   - The web app is a standard `next start` server.

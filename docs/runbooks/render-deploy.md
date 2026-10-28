@@ -21,6 +21,7 @@ ADR-005 hosting, ADR-006 runs. First complete [supabase-setup.md](supabase-setup
 
 4. **Point Supabase at the app:** in Supabase Auth URL settings, set the Site URL to `APP_ORIGIN` and add `<APP_ORIGIN>/auth/callback` to the redirect URLs.
 5. **Workspace plan:** Hobby (free) workspace is fine to start. Upgrade to Pro ($25 flat) for preview environments; then set `previews` in `render.yaml`.
+6. **Service plans (cost):** `render.yaml` puts the web app on `free` and the worker on Starter (`0.5c-512mb`, $7/month; workers have no free plan). That's $7/month in total. A free web service sleeps after 15 minutes idle (the next request takes about a minute) and runs on 0.1 CPU. Before inviting partners, change the web plan to `0.5c-512mb` ($7) or `1c-2g` ($25). Prices as of 2026-10-28; check Render's pricing page.
 
 ## Every deploy (migrations first)
 Migrations are deliberately **not** run by Render: that would put admin DB credentials in the web service's environment.
