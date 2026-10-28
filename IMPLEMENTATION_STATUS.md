@@ -2,6 +2,8 @@
 
 _Last updated: 2026-10-28 (M8, "Security, privacy and failure-mode review")_
 
+**Release readiness (M9, 2026-10-28): NO-GO today; conditional go for a 3–5 person invited pilot once the P0 blockers are closed. See [docs/release/readiness-m9.md](docs/release/readiness-m9.md).**
+
 "Verified" means the check was actually run, with the stated result, in the environment noted. Code presence alone is not verification.
 
 ## Verified locally (Linux, Node 22.22.0, PostgreSQL 16.15, Supabase CLI 2.120.0, Python 3.12.3, uv 0.11)

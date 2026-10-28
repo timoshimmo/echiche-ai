@@ -1,6 +1,6 @@
 # Echiche (starter, milestone M8)
 
-**Version:** 0.8.0 · **Stage:** M8 "Security, privacy and failure-mode review" done ([report](docs/security/review-m8.md); ADR-011 proposed); next is M9 (release-readiness review).
+**Version:** 0.8.0 · **Stage:** M8 "Security, privacy and failure-mode review" done ([report](docs/security/review-m8.md); ADR-011 proposed); M9 release-readiness review: **no-go today, conditional go** for a small invited pilot after 8 P0s ([readiness report](docs/release/readiness-m9.md)).
 
 > **Not production-ready yet.** Already in place:
 > - sign-in, per-user isolation (app checks plus row-level security), and CSRF/size/rate limits (M2);
