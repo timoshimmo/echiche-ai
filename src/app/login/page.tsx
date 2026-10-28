@@ -1,3 +1,5 @@
+import { SiteFooter } from "../site-footer";
+
 export const dynamic = "force-dynamic";
 
 const MESSAGES: Record<string, string> = {
@@ -32,6 +34,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
           <button type="submit">Email me a sign-in link <span>↗</span></button>
         </form>
       </section>
+      <SiteFooter />
     </main>
   );
 }

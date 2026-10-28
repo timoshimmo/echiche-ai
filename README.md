@@ -86,7 +86,7 @@ Useful commands: `npm run db:reset` (recreate and re-migrate), `npm run db:new-m
 | `APP_ORIGIN` | production | Exact https origin; used for CSRF checks and auth redirects |
 | `PROJECT_CREATE_LIMIT_PER_HOUR`, `RUN_CREATE_LIMIT_PER_HOUR` | no | Per-user caps, default 30 / 20 |
 | `RUN_BUDGET_MAX_STEPS` / `_ACTIVE_SECONDS` / `_RESEARCH_CALLS` / `_COST_USD` | no | Per-run caps, default 18 / 600 / 8 / 0.50. The cost cap is enforced before every model call (worst case). |
-| `USER_DAILY_SPEND_LIMIT_USD`, `GLOBAL_DAILY_SPEND_LIMIT_USD` | no | Rolling-24-hour spend ceilings, default 5 / 50. Each run's cap and each resume is reserved in full when queued ([ADR-011](docs/decisions/011-usage-ledger-and-spend-ceilings.md)). |
+| `USER_DAILY_SPEND_LIMIT_USD`, `GLOBAL_DAILY_SPEND_LIMIT_USD` | no | Rolling-24-hour spend ceilings, default 2 / 15 (pilot values). Each run's cap and each resume is reserved in full when queued ([ADR-011](docs/decisions/011-usage-ledger-and-spend-ceilings.md)). |
 | `EXPORT_LIMIT_PER_HOUR`, `JOURNAL_WRITE_LIMIT_PER_HOUR` | no | Per-user hourly limits on exports and memory/decision changes, default 10 / 300 |
 
 `OPENAI_API_KEY` is **refused** in the web environment: only the worker may hold it.

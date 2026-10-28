@@ -1,6 +1,6 @@
 # ADR-011: Usage ledger and spend ceilings
 
-- Status: **Proposed** (2026-10-28). The decision owner should confirm the default ceilings before deploying.
+- Status: **Accepted** (2026-10-28). The decision owner approved pilot ceilings of $2 per user and $15 across all users per rolling 24 hours.
 - Date: 2026-10-28
 - Decision owner: Tokmang
 - Related: [M8 security review](../security/review-m8.md), finding F1; ADR-006 (budgets); ADR-009 (hard delete)
@@ -22,8 +22,8 @@ Hourly creation limits counted rows in `projects` and `thought_runs`. ADR-009 ma
 
    | Variable | Default |
    |---|---|
-   | `USER_DAILY_SPEND_LIMIT_USD` | 5 |
-   | `GLOBAL_DAILY_SPEND_LIMIT_USD` | 50 |
+   | `USER_DAILY_SPEND_LIMIT_USD` | 2 (pilot) |
+   | `GLOBAL_DAILY_SPEND_LIMIT_USD` | 15 (pilot) |
    | `EXPORT_LIMIT_PER_HOUR` | 10 |
    | `JOURNAL_WRITE_LIMIT_PER_HOUR` | 300 |
 

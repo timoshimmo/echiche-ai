@@ -29,10 +29,10 @@ services:
         sync: false
       # Spend ceilings (M8, F1): each run's cap and each resume are reserved in full, per user and
       # for everyone, over a rolling 24 hours. Set them to what you are willing to pay per day.
-      - key: USER_DAILY_SPEND_LIMIT_USD
-        value: "5"
+      - key: USER_DAILY_SPEND_LIMIT_USD   # pilot values approved 2026-10-28 (ADR-011)
+        value: "2"
       - key: GLOBAL_DAILY_SPEND_LIMIT_USD
-        value: "50"
+        value: "15"
 
   - type: worker
     name: echiche-worker

@@ -30,7 +30,7 @@ describe("parseServerConfig", () => {
       supabasePublishableKey: BASE.SUPABASE_PUBLISHABLE_KEY,
       appOrigin: "http://localhost:3000",
       limits: { projectsPerHour: 30, runsPerHour: 20, exportsPerHour: 10, journalWritesPerHour: 300 },
-      spend: { userDailyUsd: 5, globalDailyUsd: 50 },
+      spend: { userDailyUsd: 2, globalDailyUsd: 15 },
       runBudget: {
         initial: { maxSteps: 18, maxActiveSeconds: 600, maxResearchCalls: 8, maxCostUsd: 0.5 },
         resumeIncrement: { maxSteps: 9, maxActiveSeconds: 300, maxResearchCalls: 4, maxCostUsd: 0.25 }

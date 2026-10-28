@@ -12,6 +12,16 @@
 - **PARTIAL** means part is evidenced and part is missing.
 - **FAIL** means checked, and the requirement is not met.
 
+## Status update (2026-10-28, 18:45 WAT)
+| P0 | Status |
+|---|---|
+| P0-1 privacy notice, terms, support | **Drafted.** `/privacy` and `/terms` are public pages with a "draft for legal review" banner. Support contact `info@echiche-ai.com` · `+234 805 752 7307` appears on every page. **Still open:** legal review, plus the bracketed items: legal entity and address, legal bases, transfer safeguards, backup and log retention, response time. Then set `LEGAL.status = "final"` in `src/lib/domain/site.ts`. |
+| P0-3 user-visible limitations and copy | **Done.** New hero copy; the workflow strip shows the 5 stages plus a quick-run note; a pilot and "not professional advice" notice with legal and support links is on every page, including login. Unit-tested; rendered and checked at desktop width and 390 px. |
+| P0-6 spend ceilings | **Set:** $2 per user and $15 overall per rolling 24 hours (ADR-011 accepted). The defaults, `render.yaml` and `.env.example` all carry these values. Sign-up policy, Auth rate limits and backups remain to do in staging. |
+| P0-7 incident plan | Owner to be named by Tokmang. |
+| P0-4 CI and staging | Waiting on the GitHub connection and the staging accounts. |
+| P0-2, P0-5, P0-8 | Unchanged. |
+
 ## 1. Recommendation: **NO-GO today; CONDITIONAL GO** for a small invited pilot once the 8 P0s in §3 are closed
 
 The engineering core is in good shape and well evidenced:

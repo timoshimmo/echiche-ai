@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useRef, useState } from "react";
+import { FormEvent, Fragment, useEffect, useRef, useState } from "react";
 import {
   RUN_ERROR_MESSAGES, RUN_STAGES, SETTLED_STATUSES,
   type CurrentUser, type Project, type RunStage, type ThoughtRunWithEvents
@@ -8,6 +8,7 @@ import {
 import { ROUTING_POLICY } from "@/lib/domain/routing";
 import { DecisionBriefView, generationDetail, generationLabel } from "./decision-brief";
 import { Journal } from "./journal";
+import { SiteFooter } from "./site-footer";
 
 const STATUS_LABEL: Record<ThoughtRunWithEvents["status"], string> = {
   queued: "Queued", planning: "Planning", researching: "Researching", critiquing: "Critiquing",
@@ -18,6 +19,12 @@ const STAGE_LABEL: Record<RunStage, string> = {
   planning: "Plan", researching: "Research", critiquing: "Critique", verifying: "Verify", synthesizing: "Synthesize"
 };
 const POLL_MS = 1500;
+
+/** The five stages every standard or deep run goes through (RUN_STAGES). */
+const WORKFLOW: [string, string, string][] = [
+  ["01", "Frame", "Define the decision"], ["02", "Research", "Find evidence"], ["03", "Challenge", "Test assumptions"],
+  ["04", "Verify", "Check each claim"], ["05", "Brief", "Recommend a next step"]
+];
 
 type Depth = "auto" | "quick" | "standard" | "deep";
 const DEPTHS: [Depth, string][] = [
@@ -159,9 +166,9 @@ export default function HomePage() {
         </div>
       </header>
       <section className="hero">
-        <p className="eyebrow">FOUNDING BUILD · 0.1.0</p>
+        <p className="eyebrow">EARLY PILOT</p>
         <h1>Think beyond the<br /><em>next answer.</em></h1>
-        <p className="hero-copy">Keep the question, challenge the assumptions, and turn uncertainty into a next step. This first slice proves the project → thought run → decision scaffold flow.</p>
+        <p className="hero-copy">Keep the question, challenge the assumptions, and turn uncertainty into a next step. Each run frames your decision, researches it where useful, challenges it, checks its claims and writes a brief you review. Echiche can be wrong: check what matters.</p>
       </section>
       {message && <div className="notice" role="status">{message}</div>}
       <div className="workspace">
@@ -185,7 +192,8 @@ export default function HomePage() {
             </select><small className="hint">{DEPTH_HINT[depth]}</small></label>
             <button disabled={busy || !selectedId || !settled}>{!settled ? "Run in progress…" : "Run deep thought"} <span>↗</span></button>
           </form>
-          <div className="workflow"><div><span>01</span><strong>Frame</strong><small>Define the decision</small></div><i>→</i><div><span>02</span><strong>Challenge</strong><small>Test assumptions</small></div><i>→</i><div><span>03</span><strong>Synthesize</strong><small>Choose a next step</small></div></div>
+          <div className="workflow">{WORKFLOW.map(([n, name, what], i) => <Fragment key={n}>{i > 0 && <i>→</i>}<div><span>{n}</span><strong>{name}</strong><small>{what}</small></div></Fragment>)}</div>
+          <p className="workflow-note">Quick runs skip research, critique and verification, and say so.</p>
         </section>
       </div>
       {run && <section className="results" aria-live="polite">
@@ -228,7 +236,7 @@ export default function HomePage() {
         setProjects(current => current.filter(p => p.id !== selectedId)); setSelectedId(""); setRun(null);
         setMessage("Project deleted permanently.");
       }} />}
-      <footer><span>ECHICHE / STARTER REPOSITORY</span><span>Built for continuity, not an unrestricted agent swarm.</span></footer>
+      <SiteFooter />
     </main>
   );
 }
