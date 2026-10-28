@@ -110,7 +110,7 @@ The web app classifies each run when it is queued (`src/lib/domain/routing.ts`).
 
   They contain no prompts or brief text beyond the synthetic cases.
 
-### 4. Results (fake mode, actually run; not a quality claim)
+### 4. Results (fake mode, actually run at commit `3288679`; not a quality claim; full table: `evals/results/decision-benchmark.v1.fake.md`)
 | Metric | A | B | C | R |
 |---|---|---|---|---|
 | Citations to sources that do not support the claim | 0 | **4** | 0 | 0 |
@@ -119,7 +119,7 @@ The web app classifies each run when it is queued (`src/lib/domain/routing.ts`).
 | No-evidence cases handled honestly | 1.00 | 0.83 | 1.00 | 1.00 |
 | Conflicting sources surfaced / stale evidence flagged | 0 / 0 | 0 / 0 | 1.00 / 1.00 | 1.00 / 1.00 |
 | Expected memory recalled · irrelevant memory left out · leaks | 0 · 1.00 · 0 | 0 · 1.00 · 0 | 1.00 · 1.00 · 0 | 1.00 · 1.00 · 0 |
-| Injected text echoed (adversarial cases) | n/a | 0.67 | 0.67 | 0.67 |
+| Injected text echoed (adversarial cases) | 0 (reads no pages) | 0.67 | 0.67 | 0.67 |
 | Budget cases stopped honestly | 1.00 | 1.00 | 1.00 | 1.00 |
 | Model calls · searches · scripted cost | 81 · 0 · $0.65 | 105 · 31 · $1.00 | 174 · 31 · $1.56 | 168 · 28 · $1.50 |
 
