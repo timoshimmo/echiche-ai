@@ -3,7 +3,10 @@ import type { CurrentUser } from "@/lib/domain/types";
 import { AuthUnavailableError, getCurrentUser } from "./auth";
 import { ConfigError, getServerConfig } from "./config";
 import { log } from "./log";
-import { IdempotencyConflictError, ProjectArchivedError, RateLimitError, RunStateError } from "./repository";
+import {
+  DecisionStateError, IdempotencyConflictError, MemoryStateError, ProjectArchivedError, RateLimitError, RunStateError,
+  SensitiveConfirmationError
+} from "./repository";
 
 /** Stable, client-facing error codes (blueprint §6.2). Messages are fixed strings, never raw exception text. */
 export type ApiErrorCode =
@@ -14,6 +17,9 @@ export type ApiErrorCode =
   | "PROJECT_ARCHIVED"
   | "RUN_STATE_CONFLICT"
   | "IDEMPOTENCY_CONFLICT"
+  | "MEMORY_STATE_CONFLICT"
+  | "DECISION_STATE_CONFLICT"
+  | "SENSITIVE_CONFIRMATION_REQUIRED"
   | "PAYLOAD_TOO_LARGE"
   | "UNSUPPORTED_MEDIA_TYPE"
   | "RATE_LIMITED"
@@ -34,7 +40,7 @@ export function ok(data: unknown, status = 200, headers: Record<string, string> 
 }
 
 /** Another owner's resource and a nonexistent one get the same answer. */
-export const notFound = (what: "Project" | "Run") => apiError("NOT_FOUND", `${what} not found.`, 404);
+export const notFound = (what: "Project" | "Run" | "Memory" | "Decision") => apiError("NOT_FOUND", `${what} not found.`, 404);
 
 const CONNECTION_ERROR_CODES = new Set(["ECONNREFUSED", "ECONNRESET", "ETIMEDOUT", "ENOTFOUND", "EAI_AGAIN", "CONNECT_TIMEOUT", "CONNECTION_CLOSED", "CONNECTION_ENDED", "CONNECTION_DESTROYED"]);
 
@@ -65,6 +71,15 @@ export function handleUnexpected(error: unknown, route: string): NextResponse {
   }
   if (error instanceof RunStateError) {
     return apiError("RUN_STATE_CONFLICT", "That action isn't available for this run in its current state.", 409);
+  }
+  if (error instanceof MemoryStateError) {
+    return apiError("MEMORY_STATE_CONFLICT", "That action isn't available for this memory in its current state.", 409);
+  }
+  if (error instanceof DecisionStateError) {
+    return apiError("DECISION_STATE_CONFLICT", "Only the current decision can be revised; earlier versions are kept as history.", 409);
+  }
+  if (error instanceof SensitiveConfirmationError) {
+    return apiError("SENSITIVE_CONFIRMATION_REQUIRED", "This proposal may contain sensitive personal information. Confirm explicitly to save it.", 409);
   }
   if (error instanceof IdempotencyConflictError) {
     return apiError("IDEMPOTENCY_CONFLICT", "This Idempotency-Key was already used for a different request.", 409);

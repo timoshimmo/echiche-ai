@@ -1,5 +1,5 @@
 // Presentational only; types-only imports keep zod and server code out of the client bundle.
-import type { DecisionBrief, EvidenceClaim, EvidenceSource, GenerationSummary, RunEvidence } from "@/lib/domain/types";
+import type { DecisionBrief, EvidenceClaim, EvidenceSource, GenerationSummary, RememberedContext, RunEvidence } from "@/lib/domain/types";
 
 const PROVIDER_NAMES: Record<string, string> = { openai: "OpenAI" };
 const LABELS: Record<string, string> = {
@@ -72,7 +72,17 @@ function EvidenceView({ brief, evidence }: { brief: DecisionBrief; evidence: Run
   );
 }
 
-export function DecisionBriefView({ brief, evidence }: { brief: DecisionBrief; evidence?: RunEvidence }) {
+function RememberedView({ items }: { items: RememberedContext[] }) {
+  return (
+    <details className="caveat remembered">
+      <summary><strong>Remembered items this run was given ({items.length})</strong></summary>
+      <ul className="brief-list">{items.map(i =>
+        <li key={i.ref}><b>{i.ref}</b> {i.kind.replace("_", " ")} (recorded {i.observedAt.slice(0, 10)}): {i.content}</li>)}</ul>
+    </details>
+  );
+}
+
+export function DecisionBriefView({ brief, evidence, remembered }: { brief: DecisionBrief; evidence?: RunEvidence; remembered?: RememberedContext[] }) {
   return (
     <div className="brief">
       <article className="stage-card brief-wide">
@@ -114,13 +124,14 @@ export function DecisionBriefView({ brief, evidence }: { brief: DecisionBrief; e
         </article>
       </div>
       {brief.proposed_memory_updates.length > 0 &&
-        <div className="caveat"><strong>Proposed for project memory (not saved; review in a later release)</strong>
+        <div className="caveat"><strong>Proposed for project memory (not saved until you approve them in Memory and decisions)</strong>
           <List items={brief.proposed_memory_updates.map(m => `${m.kind.replace("_", " ")}: ${m.statement}`)} /></div>}
       <div className="caveat"><strong>Limitations</strong>
         <List items={brief.limitations.length ? brief.limitations : ["None stated by the model; treat this as unverified analysis."]} />
         {brief.citations.length === 0 && <p>No sources are cited in this brief.</p>}
       </div>
       {evidence && evidence.sources.length > 0 && <EvidenceView brief={brief} evidence={evidence} />}
+      {remembered && remembered.length > 0 && <RememberedView items={remembered} />}
     </div>
   );
 }

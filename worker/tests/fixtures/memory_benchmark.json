@@ -1,0 +1,35 @@
+{
+  "description": "Synthetic memory corpus (ADR-009 benchmark). Two owners, three projects. Statuses: active, superseded, proposed, rejected. Queries list the memory keys that should be recalled beyond the always-included goals, constraints and decision record; an empty list means the correct answer is to recall nothing (abstention).",
+  "projects": {
+    "P1": {"owner": "U1", "title": "Clinic scheduling pilot"},
+    "P2": {"owner": "U1", "title": "Hiring plan"},
+    "P3": {"owner": "U2", "title": "Another founder's clinic product"}
+  },
+  "memories": [
+    {"key": "goal", "project": "P1", "kind": "goal", "status": "active", "content": "Reach 20 paying clinics by June 2027."},
+    {"key": "team_old", "project": "P1", "kind": "constraint", "status": "superseded", "content": "Only one engineer is available for the product."},
+    {"key": "team", "project": "P1", "kind": "constraint", "status": "active", "content": "Two engineers are available until March.", "supersedes": "team_old"},
+    {"key": "price", "project": "P1", "kind": "assumption", "status": "active", "content": "Clinics will pay at least 80 dollars per month for scheduling."},
+    {"key": "reception", "project": "P1", "kind": "assumption", "status": "active", "content": "Receptionists prefer phone booking over online forms."},
+    {"key": "integration", "project": "P1", "kind": "open_question", "status": "active", "content": "Does the patient records integration need certification?"},
+    {"key": "lagos", "project": "P1", "kind": "fact", "status": "active", "content": "Three clinics in Lagos signed letters of intent."},
+    {"key": "paid_pilot", "project": "P1", "kind": "decision", "status": "active", "content": "Chose a paid pilot over a free trial."},
+    {"key": "unapproved", "project": "P1", "kind": "assumption", "status": "proposed", "content": "Clinics hate monthly subscriptions for scheduling."},
+    {"key": "rejected", "project": "P1", "kind": "decision", "status": "rejected", "content": "Expand to dental practices next quarter."},
+    {"key": "p2_rate", "project": "P2", "kind": "assumption", "status": "active", "content": "Senior engineers cost 80 dollars per hour per month of contract."},
+    {"key": "p2_goal", "project": "P2", "kind": "goal", "status": "active", "content": "Hire a designer before the pilot starts."},
+    {"key": "p3_price", "project": "P3", "kind": "assumption", "status": "active", "content": "Clinics will pay 200 dollars per month for scheduling."},
+    {"key": "p3_records", "project": "P3", "kind": "open_question", "status": "active", "content": "Does the records integration need certification?"}
+  ],
+  "decision": {"project": "P1", "question": "Pilot model for the first clinics?", "choice": "Run a paid pilot with three clinics.", "rationale": "Tests willingness to pay at low cost."},
+  "queries": [
+    {"q": "How much will clinics pay per month for scheduling?", "expect": ["price"]},
+    {"q": "Should we build the patient records integration now?", "expect": ["integration"]},
+    {"q": "What did the Lagos clinics commit to?", "expect": ["lagos"]},
+    {"q": "Do receptionists like online booking forms?", "expect": ["reception"]},
+    {"q": "Was the pilot paid or free?", "expect": ["paid_pilot"]},
+    {"q": "Should we hire a designer?", "expect": []},
+    {"q": "What color should the logo be?", "expect": []},
+    {"q": "Are clinics interested at all?", "expect": []}
+  ]
+}

@@ -25,6 +25,7 @@ from echiche_worker.contracts import (
     ClaimSetV1,
     ClaimVerificationV1,
     DecisionFrameV1,
+    DecisionFrameV2,
     EvidenceSetV1,
     PassageV1,
     SearchSummaryV1,
@@ -60,7 +61,7 @@ class ResearchSettings:
 def gather_evidence(
     settings: ResearchSettings,
     ctx: StageContext,
-    frame: DecisionFrameV1,
+    frame: DecisionFrameV1 | DecisionFrameV2,
     plan_queries: Callable[[int], list[str]],
     deadline: float,
 ) -> tuple[EvidenceSetV1, int]:

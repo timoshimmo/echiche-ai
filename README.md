@@ -1,6 +1,6 @@
-# Echiche (starter, milestone M5)
+# Echiche (starter, milestone M6)
 
-**Version:** 0.5.0 · **Stage:** M5 "Research, evidence and verification" implemented (ADR-008 accepted); next is M6 (memory and decision journal).
+**Version:** 0.6.0 · **Stage:** M6 "Memory and decision journal" implemented (ADR-009 accepted); next is M7 (evaluation and adaptive compute).
 
 > **Not production-ready yet.** Already in place:
 > - sign-in, per-user isolation (app checks plus row-level security), and CSRF/size/rate limits (M2);
@@ -8,7 +8,9 @@
 > - an OpenAI-backed decision brief behind a versioned prompt registry, with strict structured outputs, spend caps and call telemetry (M4). It is **off by default**: the worker runs in demo mode until you set a key ([enabling live reasoning](docs/runbooks/render-deploy.md#enabling-live-reasoning-openai-adr-007));
 > - web research with provenance (M5): Brave finds pages, the worker reads them itself, and claims are tied to exact quotes and checked independently. Every citation links to a stored source and passage. Also **off by default** ([enabling research](docs/runbooks/render-deploy.md#enabling-research-brave-adr-008)).
 >
-> Still missing before real users: evaluation of the model output (M7), export/delete in the app (M6), and the release gates in [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md).
+> - user-controlled memory and a decision journal (M6). Runs propose memories, and nothing is kept until you approve it. Corrections create new versions. Accepted briefs become versioned decisions with outcomes. Later runs see what was remembered, labelled and dated. Export (JSON) and hard delete are built in.
+>
+> Still missing before real users: evaluation of the model output (M7), retention decisions, and the release gates in [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md).
 
 ## Architecture
 
@@ -128,6 +130,15 @@ Every route except `/api/health` and `/api/ready` requires a signed-in session (
 | `POST /api/runs/:id/cancel` | Queued or paused: cancelled now. Active: stops at the next stage. Idempotent. |
 | `POST /api/runs/:id/accept` | awaiting review → completed |
 | `POST /api/runs/:id/resume` | Budget-paused → queued, raising the caps (the user's explicit approval) |
+| `DELETE /api/projects/:id` | Permanently delete the project and everything in it |
+| `GET /api/projects/:id/export` | `echiche-export.v1` JSON attachment (project, runs, sources, claims, memories, decisions) |
+| `GET /api/projects/:id/memories[?status=&kind=&q=]` | Memories; default `active`; `proposed` shows what runs suggested |
+| `POST /api/projects/:id/memories` | `{ kind, content, confidence? }`: your own memory, active at once |
+| `POST /api/memories/:id/approve` · `/reject` | Review a proposal: approve (may edit; sensitive ones need `confirmSensitive: true`) or reject |
+| `PATCH /api/memories/:id` | Correct: a new version supersedes the current one |
+| `GET /api/memories/:id/history` · `DELETE /api/memories/:id` | All versions · delete every version |
+| `GET /api/projects/:id/decisions` | Decision journal: versions (newest first) with outcomes |
+| `POST /api/decisions/:id/revise` · `/outcomes` | New decision version (earlier rationale kept) · append an outcome |
 
 Another user's resource returns the **same 404** as a nonexistent one. State-changing requests must come from `APP_ORIGIN`, be `application/json`, and be at most 32 KB.
 
@@ -139,6 +150,7 @@ Another user's resource returns the **same 404** as a nonexistent one. State-cha
 | `NOT_FOUND` | 404 | Missing, malformed, or someone else's ID |
 | `PROJECT_ARCHIVED` | 409 | Run on an archived project |
 | `RUN_STATE_CONFLICT` / `IDEMPOTENCY_CONFLICT` | 409 | Action not allowed in the run's state / key reused for a different request |
+| `MEMORY_STATE_CONFLICT` / `DECISION_STATE_CONFLICT` / `SENSITIVE_CONFIRMATION_REQUIRED` | 409 | Memory action not allowed in its state / only the current decision can be revised / a sensitive proposal needs explicit confirmation |
 | `PAYLOAD_TOO_LARGE` / `UNSUPPORTED_MEDIA_TYPE` | 413 / 415 | Body limits |
 | `RATE_LIMITED` | 429 | Hourly per-user cap reached (`Retry-After`) |
 | `RUN_FAILED` | 500 | Run persisted as `failed` with `errorCode` |
@@ -171,7 +183,7 @@ worker/                 Python worker (claim loop, executor, store, contracts, p
 prompts/runtime/        versioned runtime prompts (registry format; ADR-007)
 contracts/              JSON Schemas + shared fixtures
 render.yaml             Render Blueprint (Frankfurt)
-docs/decisions/         ADRs 001–008
+docs/decisions/         ADRs 001–009
 docs/runbooks/          Supabase setup, Render deploy, run operations
 docs/security/          data lifecycle: storage, export, deletion, retention
 ```
@@ -180,7 +192,7 @@ docs/security/          data lifecycle: storage, export, deletion, retention
 
 1. ~~Provider adapter with token/time/spend caps~~ **[M4, done; ADR-007 accepted]**; output-quality evaluation **[M7]**
 2. ~~Claim/source provenance before web research~~ **[M5, done]**; Brave's written confirmation on result use and excerpt storage **[before enabling research for real users]**
-3. In-app export and delete; retention decisions ([data lifecycle](docs/security/data-lifecycle.md)) **[M6]**
+3. ~~In-app export and delete~~ **[M6, done]**; retention decisions and self-service account deletion ([data lifecycle](docs/security/data-lifecycle.md)) **[before pilot]**
 4. Custom SMTP, sign-up policy and other hosted Auth settings ([runbook](docs/runbooks/supabase-setup.md)) **[before pilot]**
 5. Playwright E2E, security review, backup/restore test, monitoring and alerting on worker heartbeats **[M8]**
 

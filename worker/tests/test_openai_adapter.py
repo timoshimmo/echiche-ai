@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 
-from echiche_worker.contracts import DecisionFrameV1
+from echiche_worker.contracts import DecisionFrameV2
 from echiche_worker.llm import ModelCallError, ModelRequest
 from echiche_worker.openai_adapter import OpenAIModelClient, strict_schema
 from echiche_worker.provider import (
@@ -28,7 +28,7 @@ Plan = tuple[int, dict[str, Any], dict[str, str], float]  # status, body, header
 
 
 def response_body(
-    text: str = VALID["decision_frame_v1"], status: str = "completed", refusal: bool = False, reason: str | None = None
+    text: str = VALID["decision_frame_v2"], status: str = "completed", refusal: bool = False, reason: str | None = None
 ) -> dict[str, Any]:
     content: list[dict[str, Any]] = (
         [{"type": "refusal", "refusal": "I can't help with that."}]
@@ -103,8 +103,8 @@ def request(timeout: float = 5) -> ModelRequest:
     return ModelRequest(
         instructions="Trusted instructions.",
         data='<untrusted name="question">\nq\n</untrusted>',
-        schema_name="decision_frame_v1",
-        json_schema=strict_schema(DecisionFrameV1),
+        schema_name="decision_frame_v2",
+        json_schema=strict_schema(DecisionFrameV2),
         max_output_tokens=1234,
         timeout_seconds=timeout,
     )
@@ -118,7 +118,7 @@ def client(server: Server, effort: str | None = None) -> OpenAIModelClient:
 
 def test_request_shape_store_false_and_strict_schema(server: Server) -> None:
     out = client(server, effort="low").generate(request())
-    assert out.status == "completed" and DecisionFrameV1.model_validate_json(out.text)
+    assert out.status == "completed" and DecisionFrameV2.model_validate_json(out.text)
     assert (out.usage.input_tokens, out.usage.cached_input_tokens, out.usage.output_tokens) == (900, 100, 300)
     assert out.usage.reasoning_tokens == 50 and out.model == "gpt-6.1-sol-2026-09-01"
     sent = server.requests[0]

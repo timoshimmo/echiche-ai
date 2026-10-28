@@ -1,11 +1,18 @@
 import { resourceIdSchema, updateProjectSchema } from "@/lib/domain/validation";
 import { getStore } from "@/lib/server/container";
 import { apiError, checkOrigin, handleUnexpected, notFound, ok, readJsonBody, requireUser } from "@/lib/server/http";
+import { journalRoute } from "@/lib/server/journal-routes";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const ROUTE = "GET|PATCH /api/projects/:projectId";
+
+/** Permanently delete the project and everything in it (runs, sources, memories, decisions). */
+export const DELETE = journalRoute({
+  route: "DELETE /api/projects/:projectId", param: "projectId", what: "Project", mutating: true, body: null,
+  act: (repo, id) => repo.deleteProject(id)
+});
 type Context = { params: Promise<{ projectId: string }> };
 
 export async function GET(_request: Request, context: Context) {

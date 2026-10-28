@@ -1,6 +1,6 @@
 # Implementation and verification status
 
-_Last updated: 2026-10-28 (M5, "Research, evidence and verification")_
+_Last updated: 2026-10-28 (M6, "Memory and decision journal")_
 
 "Verified" means the check was actually run, with the stated result, in the environment noted. Code presence alone is not verification.
 
@@ -11,15 +11,36 @@ From a **clean clone** against a **fresh database**:
 | Check | Result |
 |---|---|
 | `npm ci` · typecheck · lint | ✅ · 0 errors · 0 problems |
-| `npm test` (web unit: routes incl. owner-scoped evidence, config incl. refusing `OPENAI_API_KEY`, contracts for both result versions and research rows) | ✅ 69 tests |
+| `npm test` (web unit: routes incl. owner-scoped evidence and the memory/decision journal, config incl. refusing `OPENAI_API_KEY`, contracts) | ✅ 77 tests |
 | `npm run build` (no env); client-bundle scan; `npm audit --omit=dev` | ✅ · none found · 0 vulnerabilities |
-| `npm run test:db:prepare` from empty (0001–0006 via Supabase CLI), then re-run | ✅ · ✅ no-op |
-| `npm run test:integration`: repository + RLS as `echiche_web`, plus **three cross-language E2Es**: the demo worker CLI; the model pipeline with a scripted model; research over a local TLS site, where every brief citation resolves to a stored source and a verified quote, read by TS through RLS | ✅ 35 tests |
+| `npm run test:db:prepare` from empty (0001–0007 via Supabase CLI), then re-run | ✅ · ✅ no-op |
+| `npm run test:integration`: repository + RLS as `echiche_web`, plus **three cross-language E2Es**: the demo worker CLI; the model pipeline with a scripted model; research over a local TLS site, where every brief citation resolves to a stored source and a verified quote, read by TS through RLS; memory continuity across runs. Plus journal tests on real Postgres. | ✅ 40 tests |
 | Worker: `uv sync --locked`, ruff, ruff format, pyright strict (incl. tests), `contracts --check` | ✅ |
-| Worker unit tests (incl. prompt registry, model pipeline, OpenAI adapter, Brave adapter, fetcher guards over real TLS, research and verification pipeline with adversarial fixtures) | ✅ 139 tests |
-| Worker integration (as `echiche_worker`) | ✅ 39 tests |
-| Same web and worker integration suites on a **fresh cluster with a Supabase-like admin** (non-superuser, CREATEROLE, BYPASSRLS) | ✅ 35 + 39 |
+| Worker unit tests (incl. prompt registry, model pipeline, OpenAI adapter, Brave adapter, fetcher guards over real TLS, research and verification pipeline with adversarial fixtures, memory selection) | ✅ 145 tests |
+| Worker integration (as `echiche_worker`, incl. the memory benchmark) | ✅ 43 tests |
+| Same web and worker integration suites on a **fresh cluster with a Supabase-like admin** (non-superuser, CREATEROLE, BYPASSRLS) | ✅ 40 + 43 |
 | Upgrading an M3 database with 25 runs: only 0005 applied; M3 `stage-output.v1` checkpoints still load (integration test) | ✅ |
+
+**M6 checks.**
+- **Seeded retrieval benchmark** (real Postgres, as `echiche_worker`; 14 memories, 2 owners, 3 projects, 8 queries incl. 3 that must recall nothing): recall 1.00, precision 1.00, abstention 1.00. No superseded, unapproved, rejected, other-project or other-user item surfaced. The canonical decision always came first.
+- **Proposals:** written only as `proposed` rows. Sensitive-looking ones need explicit confirmation. They are never given to runs until approved.
+- **Lifecycle:** approve with edit, reject, correction as a new version with history, hard delete of the whole lineage.
+- **Decision journal:** accepting a brief records version 1; a revision adds version 2 and keeps v1's rationale; outcomes are appended.
+- **Database rules:** the worker can only insert proposals; provenance and decision versions are immutable; superseded memories are frozen.
+- **Isolation:** owner-only reads and writes across every route and table (RLS and the app's owner filters).
+- **Runs and memory:**
+  - invented memory refs are rejected and repaired;
+  - conflicts with remembered items appear in the brief's limitations;
+  - the remembered snapshot each run saw is stored and shown;
+  - a cross-language E2E checks that TypeScript approves, the worker's next run reads it, and TypeScript shows the provenance.
+- **Export and delete:** export returns a JSON attachment with everything. Project delete leaves no dependent row (runs, sources, memories, decisions).
+- **Mutation checks** (each makes tests fail):
+  - giving proposals or superseded rows to runs;
+  - allowing invented refs;
+  - dropping the abstention threshold;
+  - skipping sensitive confirmation;
+  - correcting or revising without superseding.
+- **UI:** the memory and decision journal panel was rendered and inspected at desktop and 390 px widths.
 
 **M5 checks.** No live Brave or web request was made. All fetching runs against a local HTTPS fixture site with a throwaway certificate, using real TLS and hostname checks.
 
@@ -94,6 +115,18 @@ What is enforced:
 
 ## Implemented
 
+**M6** (ADR-009 accepted 2026-10-28: hard delete; approved memory feeds later runs with provenance; JSON export)
+- **Migration 0007:** versioned `memories`, `decisions` and `decision_outcomes`, plus `run_memory_context`. Includes transition triggers, column grants and RLS, and project delete for owners.
+- **Worker:**
+  - proposals written from the brief at finish, with a sensitivity screen;
+  - deterministic, abstaining memory selection (`memory.py`), fed to framing 2.1.0 (`decision-frame.v2` with `memory_conflicts` and a ref guard) and synthesis 2.2.0;
+  - memory snapshots persisted per run.
+- **Web:**
+  - repository and routes for proposals, corrections, history, delete, the decision journal (from accepted briefs and revisions), outcomes, project delete and JSON export;
+  - the "Memory and decisions" panel;
+  - remembered items shown in the brief.
+- **Docs and tests:** ADR-009, data lifecycle, runbook queries, and the seeded benchmark corpus `worker/tests/fixtures/memory_benchmark.json`.
+
 **M5** (ADR-008 accepted 2026-10-28: Brave for discovery; the worker reads pages itself; research is off until a key is set)
 - **Migration 0006:** `sources`, `claims`, `claim_sources`, `research_calls`, with RLS (owner reads; worker inserts; nobody updates or deletes).
 - **Worker modules:** Brave adapter (`research.py`), safe fetcher (`fetch.py`), deterministic passages and quote matching (`passages.py`), pipeline and verification rubric (`research_pipeline.py`).
@@ -148,14 +181,13 @@ What is enforced:
 
 | Gap | Milestone |
 |---|---|
+| Retention for rejected proposals and superseded versions; self-service account deletion; account-wide export | before pilot |
+| Lexical memory recall (differently worded memories can be missed; goals, constraints and the decision are always included) | M7 evaluation |
 | Brave licensing confirmation; retention period for stored excerpts; privacy notice mention of Brave | before enabling research for real users |
 | No PDF or JavaScript-rendered pages; lexical passage selection; no cross-run search cache | later |
 | Model output not evaluated (no eval set) | M7 |
 | Privacy notice must mention OpenAI (data sent, retention) | before real users |
-| `proposed_memory_updates` are displayed only, never saved | M6 |
 | A clarifying question from framing is shown as a limitation in the brief; there is no answer-and-continue round-trip yet | later |
-| No research provenance | M5 |
-| No in-app export/delete; retention decisions open ([data lifecycle](docs/security/data-lifecycle.md)) | M6 |
 | No alerting on worker heartbeats or stale runs (visibility only); no Playwright E2E | M8 |
 | The UI polls (1.5 s) rather than streaming. Time spent in a timed-out stage isn't added to `active_seconds_used`. | — |
 | Custom SMTP, sign-up policy, hosted Auth settings | before pilot |

@@ -5,7 +5,7 @@ Versioned JSON Schema files shared by the TypeScript web app and the Python work
 - **Current:**
   - Stored run results: `decision-brief.v1` (model-generated, M4) and `reasoning-scaffold.v1` (demo mode).
   - Stage checkpoints: `stage-output.v2` (adds `data_schema` and `data`); M3 `stage-output.v1` checkpoints are still read.
-  - Model outputs, sent to the provider as strict schemas: `decision-frame.v1`, `critique.v1`, `decision-brief.v1`, and (M5) `research-plan.v1`, `claim-set.v1`, `claim-verification.v1`.
+  - Model outputs, sent to the provider as strict schemas: `decision-frame.v1` (read-only since M6), `decision-frame.v2` (adds `memory_conflicts`), `critique.v1`, `decision-brief.v1`, and (M5) `research-plan.v1`, `claim-set.v1`, `claim-verification.v1`.
   - Application-built checkpoint data (M5): `evidence-set.v1` (sources read, with passages) and `verification-report.v1` (claims, verdicts, freshness, contradictions).
   - The web app also validates the research rows it reads (`src/lib/domain/evidence.ts`), allowing https links only.
   - Shared fixtures live in `fixtures/`; both the worker (pytest) and the web app (`contracts.test.ts`) validate them.

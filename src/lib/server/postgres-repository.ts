@@ -1,6 +1,11 @@
 import postgres from "postgres";
 import { evidenceClaimSchema, evidenceSourceSchema } from "@/lib/domain/evidence";
+import type {
+  ApproveMemoryInput, CorrectMemoryInput, CreateMemoryInput, Decision, DecisionOutcome, Memory, MemoryFilter, OutcomeInput,
+  RememberedContext, ReviseDecisionInput
+} from "@/lib/domain/memory";
 import { parseRunResult } from "@/lib/domain/reasoning";
+import * as journal from "./postgres-memory";
 import {
   RUN_EVENT_TYPES, RUN_STAGES, RUN_STATUSES,
   type CreateProjectInput, type GenerationSummary, type Project, type RunBudget, type RunEvidence, type RunEvent, type StartRunInput,
@@ -304,6 +309,46 @@ class PostgresOwnerRepository implements OwnerScopedRepository {
     });
   }
 
+  async getRememberedContext(runId: string): Promise<RememberedContext[]> {
+    return this.tx(tx => journal.rememberedContext(tx, this.ownerId, runId));
+  }
+  async listMemories(projectId: string, filter: MemoryFilter): Promise<Memory[] | null> {
+    return this.tx(tx => journal.listMemories(tx, this.ownerId, projectId, filter));
+  }
+  async createMemory(projectId: string, input: CreateMemoryInput): Promise<Memory | null> {
+    return this.tx(tx => journal.createMemory(tx, this.ownerId, projectId, input));
+  }
+  async approveMemory(memoryId: string, input: ApproveMemoryInput): Promise<Memory | null> {
+    return this.tx(tx => journal.approveMemory(tx, this.ownerId, memoryId, input));
+  }
+  async rejectMemory(memoryId: string): Promise<Memory | null> {
+    return this.tx(tx => journal.rejectMemory(tx, this.ownerId, memoryId));
+  }
+  async correctMemory(memoryId: string, input: CorrectMemoryInput): Promise<Memory | null> {
+    return this.tx(tx => journal.correctMemory(tx, this.ownerId, memoryId, input));
+  }
+  async memoryHistory(memoryId: string): Promise<Memory[] | null> {
+    return this.tx(tx => journal.memoryHistory(tx, this.ownerId, memoryId));
+  }
+  async deleteMemory(memoryId: string): Promise<boolean> {
+    return this.tx(tx => journal.deleteMemory(tx, this.ownerId, memoryId));
+  }
+  async listDecisions(projectId: string): Promise<Decision[] | null> {
+    return this.tx(tx => journal.listDecisions(tx, this.ownerId, projectId));
+  }
+  async reviseDecision(decisionId: string, input: ReviseDecisionInput): Promise<Decision | null> {
+    return this.tx(tx => journal.reviseDecision(tx, this.ownerId, decisionId, input));
+  }
+  async addOutcome(decisionId: string, input: OutcomeInput): Promise<DecisionOutcome | null> {
+    return this.tx(tx => journal.addOutcome(tx, this.ownerId, decisionId, input));
+  }
+  async deleteProject(projectId: string): Promise<boolean> {
+    return this.tx(tx => journal.deleteProject(tx, this.ownerId, projectId));
+  }
+  async exportProject(projectId: string): Promise<Record<string, unknown> | null> {
+    return this.tx(tx => journal.exportProject(tx, this.ownerId, projectId));
+  }
+
   async cancelRun(runId: string): Promise<ThoughtRun | null> {
     return this.tx(async tx => {
       const run = await this.selectRun(tx, runId, true);
@@ -328,6 +373,10 @@ class PostgresOwnerRepository implements OwnerScopedRepository {
       if (run.status === "completed") return run;
       if (run.status !== "awaiting_user_review") throw new RunStateError(runId, run.status);
       await tx`update echiche.thought_runs set status = 'completed' where id = ${runId} and owner_user_id = ${this.ownerId}`;
+      if (run.result?.schemaVersion === "decision-brief.v1") {
+        // The user's explicit acceptance makes this brief the project's current decision (ADR-009).
+        await journal.recordAcceptedBrief(tx, this.ownerId, run.projectId, runId, run.result.data);
+      }
       return this.selectRun(tx, runId);
     });
   }

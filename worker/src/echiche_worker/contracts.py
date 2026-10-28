@@ -123,6 +123,29 @@ class DecisionFrameV1(_Strict):
     clarifying_question: Medium | None
 
 
+class MemoryConflictV1(_Strict):
+    ref: str = Field(pattern=r"^(M|D)[0-9]{1,3}$")
+    conflict: Medium
+
+
+class DecisionFrameV2(_Strict):
+    """v1 plus `memory_conflicts` (M6): remembered items the new question or context contradicts
+    or may have made outdated, by the ref the application supplied."""
+
+    decision_statement: Medium
+    goal: Medium
+    time_horizon: Short | None
+    options: list[Short] = Field(max_length=8)
+    criteria: list[Short] = Field(max_length=8)
+    constraints: list[Short] = Field(max_length=10)
+    assumptions: list[AssumptionV1] = Field(max_length=10)
+    unknowns: list[Medium] = Field(max_length=10)
+    research_questions: list[Medium] = Field(max_length=8)
+    clarification_needed: bool
+    clarifying_question: Medium | None
+    memory_conflicts: list[MemoryConflictV1] = Field(max_length=8)
+
+
 class ChallengedAssumptionV1(_Strict):
     assumption: Medium
     challenge: Medium
@@ -343,6 +366,7 @@ class VerificationReportV1(_Strict):
 
 
 DECISION_FRAME_SCHEMA_VERSION = "decision-frame.v1"
+DECISION_FRAME_V2_SCHEMA_VERSION = "decision-frame.v2"
 CRITIQUE_SCHEMA_VERSION = "critique.v1"
 DECISION_BRIEF_SCHEMA_VERSION = "decision-brief.v1"
 RESEARCH_PLAN_SCHEMA_VERSION = "research-plan.v1"
@@ -353,6 +377,7 @@ VERIFICATION_REPORT_SCHEMA_VERSION = "verification-report.v1"
 
 MODEL_OUTPUTS: dict[str, type[BaseModel]] = {
     DECISION_FRAME_SCHEMA_VERSION: DecisionFrameV1,
+    DECISION_FRAME_V2_SCHEMA_VERSION: DecisionFrameV2,
     CRITIQUE_SCHEMA_VERSION: CritiqueV1,
     DECISION_BRIEF_SCHEMA_VERSION: DecisionBriefV1,
     RESEARCH_PLAN_SCHEMA_VERSION: ResearchPlanV1,

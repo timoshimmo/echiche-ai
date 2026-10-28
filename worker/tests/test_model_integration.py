@@ -52,9 +52,9 @@ def test_model_run_stores_a_decision_brief_and_call_telemetry(admin: Admin, stor
 
     calls = calls_of(admin, run_id)
     assert [(c["stage"], c["outcome"], c["prompt_version"]) for c in calls] == [
-        ("planning", "ok", "2.0.0"),
+        ("planning", "ok", "2.1.0"),
         ("critiquing", "ok", "2.1.0"),
-        ("synthesizing", "ok", "2.1.0"),
+        ("synthesizing", "ok", "2.2.0"),
     ]
     assert all(len(c["prompt_sha256"]) == 64 and c["provider"] == "openai" for c in calls)
     expected = sum(spend(Decimal(c["cost_usd"])) for c in calls)
@@ -67,7 +67,7 @@ def test_model_run_stores_a_decision_brief_and_call_telemetry(admin: Admin, stor
     ).fetchall()
     assert {r["output_schema_version"] for r in stored} == {"stage-output.v2"}
     assert {r["stage"]: r["data_schema"] for r in stored} == {
-        "planning": "decision-frame.v1",
+        "planning": "decision-frame.v2",
         "researching": None,
         "critiquing": "critique.v1",
         "verifying": None,
@@ -110,7 +110,7 @@ def test_spend_cap_pauses_before_the_call_and_resume_continues(admin: Admin, sto
 def test_rate_limit_retry_after_delays_the_requeue(admin: Admin, store_factory: Any) -> None:
     run_id = create_run(admin)
     limited = ModelCallError(ProviderRateLimitedError("429", retry_after=120), TokenUsage())
-    client = FakeModelClient(script={"decision_frame_v1": [limited, limited]})
+    client = FakeModelClient(script={"decision_frame_v2": [limited, limited]})
     assert run_once(store_factory(), client) is Outcome.REQUEUED
     row = admin.execute(
         "select status, error_code, available_at > now() + interval '100 seconds' as delayed "

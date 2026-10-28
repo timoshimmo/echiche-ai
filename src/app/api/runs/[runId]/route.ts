@@ -16,7 +16,12 @@ export async function GET(_request: Request, context: { params: Promise<{ runId:
     const repo = getStore().forOwner(auth.user.id);
     const run = await repo.getRun(id.data);
     if (!run) return notFound("Run");
-    return ok({ ...run, events: await repo.listEvents(id.data), evidence: await repo.getEvidence(id.data) });
+    return ok({
+      ...run,
+      events: await repo.listEvents(id.data),
+      evidence: await repo.getEvidence(id.data),
+      remembered: await repo.getRememberedContext(id.data)
+    });
   } catch (error) {
     return handleUnexpected(error, ROUTE);
   }

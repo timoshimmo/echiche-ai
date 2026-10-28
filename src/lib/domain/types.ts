@@ -3,6 +3,8 @@ import type { RunResult } from "./reasoning";
 
 export type { DecisionBrief, ReasoningResult, ReasoningStage, RunResult } from "./reasoning";
 export type { EvidenceClaim, EvidenceLink, EvidenceSource, RunEvidence } from "./evidence";
+export type { Decision, DecisionOutcome, Memory, MemoryKind, MemoryStatus, RememberedContext } from "./memory";
+import type { RememberedContext } from "./memory";
 import type { RunEvidence } from "./evidence";
 
 /** Owner is implicit (the signed-in user) and never serialised to clients. */
@@ -82,7 +84,7 @@ export type ThoughtRun = {
 };
 
 /** GET /api/runs/:id: the run plus its events and research provenance (empty when none). */
-export type ThoughtRunWithEvents = ThoughtRun & { events: RunEvent[]; evidence?: RunEvidence };
+export type ThoughtRunWithEvents = ThoughtRun & { events: RunEvent[]; evidence?: RunEvidence; remembered?: RememberedContext[] };
 
 /** Safe, user-facing explanations for stable run error codes. */
 export const RUN_ERROR_MESSAGES: Record<string, string> = {

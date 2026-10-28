@@ -80,3 +80,15 @@ select domain, outcome, count(*) as n
 select date_trunc('day', created_at) as day, status, count(*) as n
   from echiche.claims group by 1, 2 order by 1 desc;
 ```
+
+## Memory and decisions (M6)
+```sql
+-- Proposal review rates (are proposals useful, or mostly rejected?)
+select date_trunc('week', created_at) as week, status, sensitivity, count(*) as n
+  from echiche.memories where origin = 'model_proposal'
+ group by 1, 2, 3 order by 1 desc;
+
+-- Correction rate: memories corrected at least once (a trust and quality signal)
+select count(*) filter (where version > 1) as corrected_versions, count(*) as all_rows from echiche.memories;
+```
+Users delete their own data in the app (hard delete). Operators must not edit memory or decision rows by hand: the triggers allow it for `postgres`, but versions and provenance would then no longer match what the user saw.

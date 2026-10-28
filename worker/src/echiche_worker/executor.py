@@ -174,6 +174,8 @@ def _execute(
         log("info", "run_resumed", completed_stages=list(outputs), **fields)
 
     usage = run.usage
+    memories, decision = store.load_project_memory(run) if "planning" not in outputs else ([], None)
+    run_memory = store.load_run_memory(run.id)
     for stage in STAGES:
         if stage in outputs:
             continue
@@ -203,6 +205,9 @@ def _execute(
             remaining_cost_usd=run.budget.max_cost_usd - usage.cost_usd,
             remaining_research_calls=max(0, run.budget.max_research_calls - usage.research_calls),
             final_attempt=run.attempt >= run.max_attempts,
+            project_memories=memories,
+            project_decision=decision,
+            run_memory=list(run_memory),
         )
         started = time.monotonic()
         try:
@@ -246,9 +251,18 @@ def _execute(
         duration_ms = int((time.monotonic() - started) * 1000)
         cost = Decimal(result.cost_usd) + ctx.spent_usd()
         usage = store.commit_stage(
-            run, result.output, duration_ms, result.research_calls, cost, ctx.calls, ctx.research_calls
+            run,
+            result.output,
+            duration_ms,
+            result.research_calls,
+            cost,
+            ctx.calls,
+            ctx.research_calls,
+            result.memory_context,
         )
         outputs[stage] = to_v2(result.output)
+        if result.memory_context:
+            run_memory = list(result.memory_context)
         log("info", "stage_completed", stage=stage, duration_ms=duration_ms, **fields)
 
     try:

@@ -6,6 +6,7 @@ import {
   type CurrentUser, type Project, type RunStage, type ThoughtRunWithEvents
 } from "@/lib/domain/types";
 import { DecisionBriefView, generationDetail, generationLabel } from "./decision-brief";
+import { Journal } from "./journal";
 
 const STATUS_LABEL: Record<ThoughtRunWithEvents["status"], string> = {
   queued: "Queued", planning: "Planning", researching: "Researching", critiquing: "Critiquing",
@@ -177,11 +178,15 @@ export default function HomePage() {
           <div className="stage-grid">{result.data.stages.map((stage, index) => <article className="stage-card" key={stage.stage}><span className="stage-number">0{index + 1}</span><h3>{stage.title}</h3><p>{stage.content}</p></article>)}</div>
           <div className="caveat"><strong>Important limitation</strong><p>{result.data.caveat}</p></div>
         </>}
-        {result?.schemaVersion === "decision-brief.v1" && <DecisionBriefView brief={result.data} evidence={run.evidence} />}
+        {result?.schemaVersion === "decision-brief.v1" && <DecisionBriefView brief={result.data} evidence={run.evidence} remembered={run.remembered} />}
         <p className="usage">Used {run.usage.steps}/{run.budget.maxSteps} steps · {Math.round(run.usage.activeSeconds)}s of {run.budget.maxActiveSeconds}s · ${run.usage.costUsd.toFixed(4)} of ${run.budget.maxCostUsd.toFixed(2)}</p>
         {generationDetail(run.generation) && <p className="usage">{generationDetail(run.generation)}</p>}
         {run.events?.length ? <details><summary>Run event log ({run.events.length})</summary><ul>{run.events.map(event => <li key={event.id}><b>{event.stage}</b> — {event.message}</li>)}</ul></details> : null}
       </section>}
+      {selectedId && <Journal projectId={selectedId} refreshKey={`${run?.id ?? ""}:${run?.status ?? ""}`} onDeleted={() => {
+        setProjects(current => current.filter(p => p.id !== selectedId)); setSelectedId(""); setRun(null);
+        setMessage("Project deleted permanently.");
+      }} />}
       <footer><span>ECHICHE / STARTER REPOSITORY</span><span>Built for continuity, not an unrestricted agent swarm.</span></footer>
     </main>
   );

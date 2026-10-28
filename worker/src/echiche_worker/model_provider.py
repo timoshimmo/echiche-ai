@@ -34,6 +34,7 @@ from echiche_worker.contracts import (
     CRITIQUE_SCHEMA_VERSION,
     DECISION_BRIEF_SCHEMA_VERSION,
     DECISION_FRAME_SCHEMA_VERSION,
+    DECISION_FRAME_V2_SCHEMA_VERSION,
     EVIDENCE_SET_SCHEMA_VERSION,
     MODEL_OUTPUTS,
     VERIFICATION_REPORT_SCHEMA_VERSION,
@@ -42,6 +43,7 @@ from echiche_worker.contracts import (
     CritiqueV1,
     DecisionBriefV1,
     DecisionFrameV1,
+    DecisionFrameV2,
     EvidenceSetV1,
     ResearchPlanV1,
     Stage,
@@ -49,6 +51,7 @@ from echiche_worker.contracts import (
     VerificationReportV1,
 )
 from echiche_worker.llm import ModelCallError, ModelClient, ModelReply, ModelRequest, PriceTable, TokenUsage
+from echiche_worker.memory import context_json, select_context
 from echiche_worker.openai_adapter import strict_schema
 from echiche_worker.prompts import Prompt, PromptRegistry, render
 from echiche_worker.provider import (
@@ -119,6 +122,17 @@ def check_citations(payload: BaseModel, allowed: frozenset[str]) -> None:
         raise GuardError(
             f"{len(bad)} cited source ID(s) were not supplied: only source IDs present in the evidence data "
             "may be cited; if the evidence is empty, citations and every source_ids list must be empty"
+        )
+
+
+def check_memory_refs(frame: DecisionFrameV2, refs: frozenset[str]) -> None:
+    """The model may only point at remembered items it was given (no invented recall)."""
+    unknown = sorted({c.ref for c in frame.memory_conflicts if c.ref not in refs})
+    if unknown:
+        listed = ", ".join(unknown[:8])
+        raise GuardError(
+            f"memory_conflicts refers to {listed}, which were not supplied: use only refs from the remembered "
+            "items; if none were supplied, memory_conflicts must be empty"
         )
 
 
@@ -201,7 +215,7 @@ class ModelReasoningProvider:
         deadline = time.monotonic() + ctx.timeout_seconds
         if stage == "planning":
             return self._planning(ctx, deadline)
-        frame = self._previous(ctx, "planning", DecisionFrameV1, DECISION_FRAME_SCHEMA_VERSION)
+        frame = self._frame(ctx)
         if stage == "researching":
             return self._researching(ctx, frame, deadline)
         evidence = self._evidence(ctx)
@@ -229,7 +243,12 @@ class ModelReasoningProvider:
             stage,
             ctx,
             DecisionBriefV1,
-            {"decision_frame_json": _json(frame), "critique_json": _json(critique), "evidence_json": evidence_json},
+            {
+                "decision_frame_json": _json(frame),
+                "critique_json": _json(critique),
+                "evidence_json": evidence_json,
+                "project_memory_json": context_json(ctx.run_memory),
+            },
             deadline,
             check=lambda b: check_brief(b, allowed),
         )
@@ -240,13 +259,20 @@ class ModelReasoningProvider:
         return self._result(stage, "Decision brief", content, brief, DECISION_BRIEF_SCHEMA_VERSION, [])
 
     def _planning(self, ctx: StageContext, deadline: float) -> StageResult:
+        memory = ctx.run_memory or select_context(ctx.project_memories, ctx.project_decision, ctx.prompt)
+        refs = frozenset(i.ref for i in memory)
         frame = self._generate(
             "decision-framing",
             "planning",
             ctx,
-            DecisionFrameV1,
-            {"project_context": ctx.project_context, "question": ctx.prompt},
+            DecisionFrameV2,
+            {
+                "project_context": ctx.project_context,
+                "question": ctx.prompt,
+                "project_memory_json": context_json(memory),
+            },
             deadline,
+            check=lambda f: check_memory_refs(f, refs),
         )
         limitations = (
             [f"Clarification would help: {frame.clarifying_question}"]
@@ -258,9 +284,20 @@ class ModelReasoningProvider:
             f"Options:\n{_bullets(frame.options)}\n\nCriteria:\n{_bullets(frame.criteria)}\n\n"
             f"Unknowns:\n{_bullets(frame.unknowns)}"
         )
-        return self._result("planning", "Decision frame", content, frame, DECISION_FRAME_SCHEMA_VERSION, limitations)
+        result = self._result(
+            "planning", "Decision frame", content, frame, DECISION_FRAME_V2_SCHEMA_VERSION, limitations
+        )
+        return StageResult(output=result.output, memory_context=memory)
 
-    def _researching(self, ctx: StageContext, frame: DecisionFrameV1, deadline: float) -> StageResult:
+    def _frame(self, ctx: StageContext) -> DecisionFrameV2:
+        """decision-frame.v2, or a v1 checkpoint from before M6 (read as having no conflicts)."""
+        output = ctx.previous.get("planning")
+        if getattr(output, "data_schema", None) == DECISION_FRAME_SCHEMA_VERSION:
+            v1 = self._previous(ctx, "planning", DecisionFrameV1, DECISION_FRAME_SCHEMA_VERSION)
+            return DecisionFrameV2.model_validate({**v1.model_dump(), "memory_conflicts": []})
+        return self._previous(ctx, "planning", DecisionFrameV2, DECISION_FRAME_V2_SCHEMA_VERSION)
+
+    def _researching(self, ctx: StageContext, frame: DecisionFrameV2, deadline: float) -> StageResult:
         if self.research is None:
             return StageResult(
                 output=StageOutputV2(
@@ -292,7 +329,7 @@ class ModelReasoningProvider:
         return StageResult(output=result.output, research_calls=searches)
 
     def _verifying(
-        self, ctx: StageContext, frame: DecisionFrameV1, evidence: EvidenceSetV1 | None, deadline: float
+        self, ctx: StageContext, frame: DecisionFrameV2, evidence: EvidenceSetV1 | None, deadline: float
     ) -> StageResult:
         if evidence is None or not evidence.sources:
             note = "No sources were read, so there were no claims to verify."

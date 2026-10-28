@@ -1,6 +1,6 @@
 # Data lifecycle: what is stored, export, deletion, retention
 
-_Status as of M5 (2026-10-28). Items marked **open** need a decision before the paid pilot (blueprint §8.2)._
+_Status as of M6 (2026-10-28). Items marked **open** need a decision before the paid pilot (blueprint §8.2)._
 
 ## What Echiche stores
 
@@ -16,6 +16,9 @@ _Status as of M5 (2026-10-28). Items marked **open** need a decision before the 
 | Sources the worker read (URL, title, publisher, dates, hash, ≤3 short passages, the search query that found it) | `echiche.sources` | **Yes**: the query is derived from the user's question; passages are third-party text; deleted with the run |
 | Claims and their quote links, verdicts and notes | `echiche.claims`, `echiche.claim_sources` | Derived from sources and the question; deleted with the run |
 | Research telemetry (search/fetch outcome, status, domain, bytes, cost, latency) | `echiche.research_calls` | No: no query text, no content; deleted with the run |
+| Memories (proposed, active, superseded, rejected versions), with provenance | `echiche.memories` | **Yes**: statements about the user's project; proposals are kept only as proposals until reviewed |
+| Decision versions and outcomes | `echiche.decisions`, `echiche.decision_outcomes` | **Yes** |
+| What each run was given from memory (snapshot) | `echiche.run_memory_context` | **Yes**: copies of remembered items; deleted with the run or the memory |
 | Worker liveness (worker ID, version, current run ID) | `echiche.worker_heartbeats` | No |
 | Application logs | hosting platform stdout | No: route, event, error code, IDs only (enforced in `log.ts` conventions and tests) |
 | Supabase Auth logs | Supabase | Email, IP and user agent (provider-side) |
@@ -26,17 +29,28 @@ Every Echiche row carries `owner_user_id`. Only that user can read it (ADR-004).
 **Archiving** a project hides it from the default list and blocks new runs. It is **not deletion**; the data remains.
 
 ## Deletion
-- **Account deletion (available now, operator-run):** deleting the user in Supabase Auth (dashboard, or the Admin API with the service-role key, which is never used by the app) removes `auth.users`. That cascades to **all** of their projects, runs and events (foreign keys `on delete cascade`, covered by the integration test "cascades an account deletion").
-- **User-initiated project/account deletion in the app:** **not yet** (M6). End users have no DELETE privilege until then.
+- **In the app (M6, ADR-009), all hard deletes:**
+  - **Memory:** deleting one removes every version of it.
+  - **Project:** deleting one removes it and everything under it: runs, events, checkpoints, telemetry, sources, claims, memories, decisions, outcomes and memory snapshots. Integration tests check that no dependent row is left.
+  - **Runs and events** cannot be deleted individually.
+- **Account deletion (operator-run):** deleting the user in Supabase Auth (dashboard, or the Admin API with the service-role key, which the app never uses) removes `auth.users`, which cascades to **all** of their data. Self-service account deletion in the app is **not yet** available.
 - **Backups:** deleted rows persist in Supabase backups until those backups expire. **Open:** confirm the backup retention window for the chosen plan and state it in the privacy notice.
 
 ## Export (EXPORT-01)
-**Not yet implemented (M6).** Interim: an operator can export a user's rows with SQL filtered by `owner_user_id`, on request.
+**In the app (M6):** "Export project data" downloads `echiche-export.v1` JSON, generated on request and never cached or stored. It contains:
+- the project;
+- every run: prompt, status, result, usage, events, remembered context, sources with their stored passages, and claims;
+- a model-call summary;
+- every memory version;
+- every decision version with its outcomes.
+
+Stage checkpoints and per-call telemetry rows are summarised. An account-wide export is an operator task for now (SQL filtered by `owner_user_id`).
 
 ## Retention (open)
 No automatic expiry exists yet. Decide before the pilot:
 - retention for inactive accounts;
 - retention for archived projects;
+- whether rejected proposals and superseded memory or decision versions expire (today they stay until the user deletes them);
 - log retention on the hosting platform and in Supabase;
 - what the privacy notice promises.
 

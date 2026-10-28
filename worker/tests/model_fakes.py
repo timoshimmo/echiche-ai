@@ -21,7 +21,7 @@ def fixture(name: str) -> dict[str, Any]:
 
 
 VALID: dict[str, str] = {
-    "decision_frame_v1": json.dumps(fixture("decision-frame.v1")),
+    "decision_frame_v2": json.dumps(fixture("decision-frame.v1") | {"memory_conflicts": []}),
     "critique_v1": json.dumps(fixture("critique.v1")),
     "decision_brief_v1": json.dumps(fixture("decision-brief.v1")),
 }

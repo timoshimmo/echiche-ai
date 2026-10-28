@@ -26,6 +26,7 @@ from echiche_worker.contracts import (
     STAGE_OUTPUT_V2_SCHEMA_VERSION,
     STAGES,
     VERIFICATION_REPORT_SCHEMA_VERSION,
+    DecisionBriefV1,
     EvidenceSetV1,
     Stage,
     StageOutput,
@@ -33,6 +34,7 @@ from echiche_worker.contracts import (
     StageOutputV2,
     VerificationReportV1,
 )
+from echiche_worker.memory import ContextItem, DecisionItem, MemoryItem, sensitivity
 from echiche_worker.provider import ModelCallRecord, ResearchCallRecord
 
 ACTIVE = ("planning", "researching", "critiquing", "verifying", "synthesizing")
@@ -74,6 +76,7 @@ class ClaimedRun:
     budget: Budget
     usage: Usage
     project_context: str = ""
+    project_id: str = ""
 
 
 def to_v2(output: StageOutput) -> StageOutputV2:
@@ -102,6 +105,7 @@ def connect(database_url: str) -> psycopg.Connection[Row]:
 def _claimed(row: Row) -> ClaimedRun:
     return ClaimedRun(
         id=str(row["id"]),
+        project_id=str(row["project_id"]),
         owner_user_id=str(row["owner_user_id"]),
         prompt=cast(str, row["prompt"]),
         status=cast(str, row["status"]),
@@ -325,6 +329,81 @@ class RunStore:
                      run.id, e.source_id),
                 )  # fmt: skip
 
+    # --- project memory (M6) -------------------------------------------------------------
+
+    def load_project_memory(self, run: ClaimedRun) -> tuple[list[MemoryItem], DecisionItem | None]:
+        """Active memories and the active decision of this run's project and owner only."""
+        rows = self.conn.execute(
+            """select id, kind, content, observed_at, origin, edited, version from echiche.memories
+                where project_id = %s and owner_user_id = %s and status = 'active'
+                order by observed_at desc limit 200""",
+            (run.project_id, run.owner_user_id),
+        ).fetchall()
+        memories = [
+            MemoryItem(str(r["id"]), r["kind"], r["content"], r["observed_at"], r["origin"], r["edited"], r["version"])
+            for r in rows
+        ]
+        d = self.conn.execute(
+            """select id, version, question, choice, rationale, confidence, created_at from echiche.decisions
+                where project_id = %s and owner_user_id = %s and status = 'active'""",
+            (run.project_id, run.owner_user_id),
+        ).fetchone()
+        if d is None:
+            return memories, None
+        decision = DecisionItem(
+            str(d["id"]), d["version"], d["question"], d["choice"], d["rationale"], d["confidence"], d["created_at"]
+        )
+        return memories, decision
+
+    def load_run_memory(self, run_id: str) -> list[ContextItem]:
+        rows = self.conn.execute(
+            """select ref, kind, content, observed_at, memory_id, decision_id from echiche.run_memory_context
+                where run_id = %s order by (ref like 'D%%') desc, length(ref), ref""",
+            (run_id,),
+        ).fetchall()
+        return [
+            ContextItem(
+                r["ref"],
+                r["kind"],
+                r["content"],
+                r["observed_at"],
+                str(r["memory_id"]) if r["memory_id"] else None,
+                str(r["decision_id"]) if r["decision_id"] else None,
+            )
+            for r in rows
+        ]
+
+    def _insert_memory_context(self, run: ClaimedRun, items: Sequence[ContextItem]) -> None:
+        for i in items:
+            self.conn.execute(
+                """insert into echiche.run_memory_context
+                     (run_id, owner_user_id, ref, memory_id, decision_id, kind, content, observed_at)
+                   values (%s, %s, %s, %s, %s, %s, %s, %s)
+                   on conflict (run_id, ref) do nothing""",
+                (run.id, run.owner_user_id, i.ref, i.memory_id, i.decision_id, i.kind, i.content, i.observed_at),
+            )
+
+    def _insert_proposals(self, run: ClaimedRun, brief: DecisionBriefV1) -> None:
+        """Proposals only: nothing here is durable memory until the owner approves it (MEM-01).
+        Idempotent per (run, proposal index)."""
+        for index, update in enumerate(brief.proposed_memory_updates):
+            self.conn.execute(
+                """insert into echiche.memories
+                     (owner_user_id, project_id, kind, content, status, origin, sensitivity, source_run_id,
+                      proposal_index, observed_at)
+                   values (%s, %s, %s, %s, 'proposed', 'model_proposal', %s, %s, %s, now())
+                   on conflict (source_run_id, proposal_index) do nothing""",
+                (
+                    run.owner_user_id,
+                    run.project_id,
+                    update.kind,
+                    update.statement,
+                    sensitivity(update.statement),
+                    run.id,
+                    index,
+                ),
+            )
+
     def record_calls(
         self, run: ClaimedRun, calls: Sequence[ModelCallRecord], research_calls: Sequence[ResearchCallRecord] = ()
     ) -> None:
@@ -347,6 +426,7 @@ class RunStore:
         cost_usd: Decimal,
         calls: Sequence[ModelCallRecord] = (),
         research_records: Sequence[ResearchCallRecord] = (),
+        memory_context: Sequence[ContextItem] = (),
     ) -> Usage:
         """cost_usd must include the cost of `calls` and `research_records`. The checkpoint,
         usage, telemetry, and any sources or claims it carries are written in one transaction."""
@@ -382,6 +462,7 @@ class RunStore:
                 )
                 self._insert_calls(run, calls)
                 self._insert_research_calls(run, research_records)
+                self._insert_memory_context(run, memory_context)
                 if output.data_schema == EVIDENCE_SET_SCHEMA_VERSION and output.data is not None:
                     self._insert_sources(run, EvidenceSetV1.model_validate(output.data))
                 elif output.data_schema == VERIFICATION_REPORT_SCHEMA_VERSION and output.data is not None:
@@ -397,6 +478,8 @@ class RunStore:
                    error_code = null, claimed_by = null, lease_expires_at = null""",
                 (json.dumps(result.model_dump(mode="json")), schema_version),
             )
+            if isinstance(result, DecisionBriefV1):
+                self._insert_proposals(run, result)
             self._event(run, "result", "complete", "Decision brief ready for your review.")
 
     def _terminal(self, run: ClaimedRun, status: str, code: str | None, event_type: str, message: str) -> None:

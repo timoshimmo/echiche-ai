@@ -44,7 +44,7 @@ def test_registry_loads_six_active_prompts_bound_to_contracts() -> None:
         "decision-brief-synthesis",
     )
     active = {i: registry.get(i) for i in ids}
-    assert {p.meta.output_schema for p in active.values()} == set(MODEL_OUTPUTS)
+    assert {p.meta.output_schema for p in active.values()} == set(MODEL_OUTPUTS) - {"decision-frame.v1"}
     assert all(p.meta.version.startswith("2.") and len(p.sha256) == 64 for p in active.values())
     assert len(registry.ids()) == 7
 

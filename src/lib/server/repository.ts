@@ -1,4 +1,8 @@
 import type {
+  ApproveMemoryInput, CorrectMemoryInput, CreateMemoryInput, Decision, DecisionOutcome, Memory, MemoryFilter, OutcomeInput,
+  RememberedContext, ReviseDecisionInput
+} from "@/lib/domain/memory";
+import type {
   CreateProjectInput, Project, RunBudget, RunEvent, RunEvidence, StartRunInput, ThoughtRun, UpdateProjectInput
 } from "@/lib/domain/types";
 
@@ -32,6 +36,32 @@ export interface OwnerScopedRepository {
   listEvents(runId: string): Promise<RunEvent[]>;
   /** Sources the worker read and the claims verified against them (empty lists when none). */
   getEvidence(runId: string): Promise<RunEvidence>;
+  /** Remembered items the run was given (empty when none). */
+  getRememberedContext(runId: string): Promise<RememberedContext[]>;
+
+  // --- memory and decision journal (M6, ADR-009). null = project/memory/decision not found for this owner.
+  listMemories(projectId: string, filter: MemoryFilter): Promise<Memory[] | null>;
+  createMemory(projectId: string, input: CreateMemoryInput): Promise<Memory | null>;
+  /** proposed → active (optionally edited first). Throws MemoryStateError / SensitiveConfirmationError. */
+  approveMemory(memoryId: string, input: ApproveMemoryInput): Promise<Memory | null>;
+  /** proposed → rejected. Idempotent for rejected. */
+  rejectMemory(memoryId: string): Promise<Memory | null>;
+  /** active → superseded, plus a new active version with the corrected content. Returns the new version. */
+  correctMemory(memoryId: string, input: CorrectMemoryInput): Promise<Memory | null>;
+  /** All versions of the memory's lineage, oldest first. */
+  memoryHistory(memoryId: string): Promise<Memory[] | null>;
+  /** Hard-deletes the whole lineage (all versions). false when not found. */
+  deleteMemory(memoryId: string): Promise<boolean>;
+  /** All decision versions for the project, newest first, each with its outcomes. */
+  listDecisions(projectId: string): Promise<Decision[] | null>;
+  /** Appends a new version superseding the active one (the earlier rationale is kept). Throws DecisionStateError. */
+  reviseDecision(decisionId: string, input: ReviseDecisionInput): Promise<Decision | null>;
+  /** Appends an outcome observation; never edits the decision. */
+  addOutcome(decisionId: string, input: OutcomeInput): Promise<DecisionOutcome | null>;
+  /** Hard-deletes the project and everything under it. false when not found. */
+  deleteProject(projectId: string): Promise<boolean>;
+  /** Machine-readable export of everything stored for the project (EXPORT-01). */
+  exportProject(projectId: string): Promise<Record<string, unknown> | null>;
   /**
    * Idempotent. queued/paused → cancelled immediately; active → cancel requested (the worker
    * stops between stages); already cancelled → unchanged. Throws RunStateError for runs that
@@ -91,6 +121,30 @@ export class ProjectArchivedError extends Error {
   constructor(readonly projectId: string) {
     super("Project is archived");
     this.name = "ProjectArchivedError";
+  }
+}
+
+export class MemoryStateError extends Error {
+  readonly code = "MEMORY_STATE_CONFLICT";
+  constructor(readonly memoryId: string, readonly status: string) {
+    super(`Memory is in state "${status}"`);
+    this.name = "MemoryStateError";
+  }
+}
+
+export class DecisionStateError extends Error {
+  readonly code = "DECISION_STATE_CONFLICT";
+  constructor(readonly decisionId: string) {
+    super("Only the active decision version can be revised");
+    this.name = "DecisionStateError";
+  }
+}
+
+export class SensitiveConfirmationError extends Error {
+  readonly code = "SENSITIVE_CONFIRMATION_REQUIRED";
+  constructor(readonly memoryId: string) {
+    super("Sensitive memory proposals need explicit confirmation");
+    this.name = "SensitiveConfirmationError";
   }
 }
 

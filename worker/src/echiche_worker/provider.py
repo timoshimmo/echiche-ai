@@ -14,6 +14,7 @@ from decimal import Decimal
 from typing import Literal, Protocol
 
 from echiche_worker.contracts import Stage, StageOutput, StageOutputV2
+from echiche_worker.memory import ContextItem, DecisionItem, MemoryItem
 
 
 class ProviderError(Exception):
@@ -133,6 +134,11 @@ class StageContext:
     # with an explicit limitation, instead of failing the run).
     remaining_research_calls: int = 0
     final_attempt: bool = False
+    # Project memory (M6): active memories and the active decision, already filtered to this
+    # owner and project; and what an earlier attempt of this run already selected.
+    project_memories: list[MemoryItem] = field(default_factory=list[MemoryItem])
+    project_decision: DecisionItem | None = None
+    run_memory: list[ContextItem] = field(default_factory=list[ContextItem])
 
     def spent_usd(self) -> Decimal:
         return sum((c.cost_usd for c in self.calls), Decimal("0")) + sum(
@@ -145,6 +151,7 @@ class StageResult:
     output: StageOutput
     research_calls: int = 0
     cost_usd: Decimal = field(default_factory=lambda: Decimal("0"))
+    memory_context: list[ContextItem] = field(default_factory=list[ContextItem])  # set by planning only
 
 
 class ReasoningProvider(Protocol):

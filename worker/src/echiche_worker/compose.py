@@ -10,9 +10,11 @@ from pydantic import BaseModel
 from echiche_worker.contracts import (
     DECISION_BRIEF_SCHEMA_VERSION,
     DECISION_FRAME_SCHEMA_VERSION,
+    DECISION_FRAME_V2_SCHEMA_VERSION,
     RESULT_SCHEMA_VERSION,
     DecisionBriefV1,
     DecisionFrameV1,
+    DecisionFrameV2,
     ReasoningScaffoldResultV1,
     ReasoningStageV1,
     Stage,
@@ -61,15 +63,26 @@ def _with_clarification(brief: DecisionBriefV1, planning: StageOutput | None) ->
     """Surfaces the framing stage's clarifying question (if the model asked one) as a limitation,
     so the user sees it even when the synthesis did not repeat it."""
     data = getattr(planning, "data", None)
-    if getattr(planning, "data_schema", None) != DECISION_FRAME_SCHEMA_VERSION or data is None:
+    schema = getattr(planning, "data_schema", None)
+    if data is None or schema not in (DECISION_FRAME_SCHEMA_VERSION, DECISION_FRAME_V2_SCHEMA_VERSION):
         return brief
-    frame = DecisionFrameV1.model_validate(data)
-    if not frame.clarification_needed or not frame.clarifying_question or len(brief.limitations) >= 10:
-        return brief
-    note = f"Open question from framing: {frame.clarifying_question}"
-    if len(note) > 500:
-        note = note[:497] + "..."
-    return brief.model_copy(update={"limitations": [*brief.limitations, note]})
+    frame: DecisionFrameV1 | DecisionFrameV2 = (
+        DecisionFrameV2.model_validate(data)
+        if schema == DECISION_FRAME_V2_SCHEMA_VERSION
+        else DecisionFrameV1.model_validate(data)
+    )
+    notes: list[str] = []
+    if frame.clarification_needed and frame.clarifying_question:
+        notes.append(f"Open question from framing: {frame.clarifying_question}")
+    if isinstance(frame, DecisionFrameV2):
+        # Contradictions with what the project remembers are surfaced, never silently resolved.
+        notes.extend(f"Remembered item {c.ref} may be outdated: {c.conflict}" for c in frame.memory_conflicts)
+    merged = list(brief.limitations)
+    for note in notes:
+        text = note if len(note) <= 500 else note[:497] + "..."
+        if text not in merged and len(merged) < 10:
+            merged.append(text)
+    return brief if merged == list(brief.limitations) else brief.model_copy(update={"limitations": merged})
 
 
 def _with_research_limits(brief: DecisionBriefV1, outputs: Mapping[Stage, StageOutput]) -> DecisionBriefV1:

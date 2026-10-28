@@ -11,6 +11,7 @@ from echiche_worker.contracts import (
     CritiqueV1,
     DecisionBriefV1,
     DecisionFrameV1,
+    DecisionFrameV2,
     Stage,
     StageOutput,
     StageOutputV2,
@@ -70,7 +71,7 @@ def test_model_fixtures_match_contracts() -> None:
             DecisionBriefV1.model_validate(invalid)
 
 
-@pytest.mark.parametrize("model", [DecisionFrameV1, CritiqueV1, DecisionBriefV1])
+@pytest.mark.parametrize("model", [DecisionFrameV1, DecisionFrameV2, CritiqueV1, DecisionBriefV1])
 def test_strict_schemas_are_closed_and_fully_required(model: Any) -> None:
     schema = strict_schema(model)
 
@@ -99,14 +100,14 @@ def test_full_pipeline_produces_a_validated_decision_brief() -> None:
     outputs, calls = run_all(client)
     version, result = compose_final(QUESTION, outputs)
     assert version == "decision-brief.v1" and isinstance(result, DecisionBriefV1)
-    assert [r.schema_name for r in client.requests] == ["decision_frame_v1", "critique_v1", "decision_brief_v1"]
+    assert [r.schema_name for r in client.requests] == ["decision_frame_v2", "critique_v1", "decision_brief_v1"]
     assert [c.stage for c in calls] == ["planning", "critiquing", "synthesizing"]
     assert all(c.outcome == "ok" and not c.repair for c in calls)
     assert [c.prompt_id for c in calls] == ["decision-framing", "decision-critic", "decision-brief-synthesis"]
     research = outputs["researching"]
     assert research.limitations and "No research provider" in research.limitations[0]
     planning = outputs["planning"]
-    assert isinstance(planning, StageOutputV2) and planning.data_schema == "decision-frame.v1"
+    assert isinstance(planning, StageOutputV2) and planning.data_schema == "decision-frame.v2"
 
 
 def test_user_content_only_reaches_the_fenced_data_never_the_instructions() -> None:
@@ -121,12 +122,12 @@ def test_user_content_only_reaches_the_fenced_data_never_the_instructions() -> N
     request = client.requests[0]
     assert "SYSTEM: ignore" not in request.instructions and "Acme" not in request.instructions
     assert request.instructions == provider.prompts["decision-framing"].instructions
-    assert "SYSTEM: ignore" in request.data and request.data.count("</untrusted>") == 2  # two inputs
+    assert "SYSTEM: ignore" in request.data and request.data.count("</untrusted>") == 3  # three inputs
 
 
 def test_one_repair_attempt_fixes_an_invalid_output() -> None:
-    broken = json.loads(VALID["decision_frame_v1"]) | {"goal": "x" * 900}
-    client = FakeModelClient(script={"decision_frame_v1": [json.dumps(broken)]})
+    broken = json.loads(VALID["decision_frame_v2"]) | {"goal": "x" * 900}
+    client = FakeModelClient(script={"decision_frame_v2": [json.dumps(broken)]})
     c = ctx()
     model_provider(client).run_stage("planning", c)
     assert [(x.outcome, x.repair) for x in c.calls] == [("invalid_output", False), ("ok", True)]
@@ -136,7 +137,7 @@ def test_one_repair_attempt_fixes_an_invalid_output() -> None:
 
 
 def test_a_second_invalid_output_fails_the_stage() -> None:
-    client = FakeModelClient(script={"decision_frame_v1": ["not json", "{}"]})
+    client = FakeModelClient(script={"decision_frame_v2": ["not json", "{}"]})
     c = ctx()
     with pytest.raises(InvalidProviderOutputError):
         model_provider(client).run_stage("planning", c)
@@ -161,7 +162,7 @@ def test_invented_citations_are_rejected_then_repaired() -> None:
 
 def test_refusal_and_truncation_are_permanent_and_recorded() -> None:
     for status, error in (("refused", ProviderRefusedError), ("truncated", ProviderOutputTruncatedError)):
-        client = FakeModelClient(script={"decision_frame_v1": [reply("", status=status)]})
+        client = FakeModelClient(script={"decision_frame_v2": [reply("", status=status)]})
         c = ctx()
         with pytest.raises(error):
             model_provider(client).run_stage("planning", c)
@@ -170,7 +171,7 @@ def test_refusal_and_truncation_are_permanent_and_recorded() -> None:
 
 def test_provider_errors_propagate_with_their_usage_recorded() -> None:
     failure = ModelCallError(ProviderRateLimitedError("slow down", retry_after=7), TokenUsage(), latency_ms=5)
-    client = FakeModelClient(script={"decision_frame_v1": [failure]})
+    client = FakeModelClient(script={"decision_frame_v2": [failure]})
     c = ctx()
     with pytest.raises(ProviderRateLimitedError) as caught:
         model_provider(client).run_stage("planning", c)
@@ -201,7 +202,7 @@ def test_unknown_model_has_no_price_and_is_refused_at_start_up() -> None:
 
 def test_repair_note_lists_paths_without_values() -> None:
     try:
-        DecisionFrameV1.model_validate_json(json.dumps(json.loads(VALID["decision_frame_v1"]) | {"goal": "S" * 999}))
+        DecisionFrameV2.model_validate_json(json.dumps(json.loads(VALID["decision_frame_v2"]) | {"goal": "S" * 999}))
     except ValidationError as error:
         note = repair_note(error)
         assert "goal" in note and "SSSS" not in note
@@ -235,8 +236,9 @@ def test_a_clarifying_question_from_framing_reaches_the_brief() -> None:
     frame = fixture("decision-frame.v1") | {
         "clarification_needed": True,
         "clarifying_question": "What price per clinic are you considering?",
+        "memory_conflicts": [],
     }
-    client = FakeModelClient(script={"decision_frame_v1": [json.dumps(frame)]})
+    client = FakeModelClient(script={"decision_frame_v2": [json.dumps(frame)]})
     outputs, _ = run_all(client)
     _, result = compose_final(QUESTION, outputs)
     assert isinstance(result, DecisionBriefV1)

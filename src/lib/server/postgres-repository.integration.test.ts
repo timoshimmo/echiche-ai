@@ -204,7 +204,7 @@ describe("end to end across languages (ADR-001 D8): web queues → Python worker
     expect(done.result.data.citations).toEqual([]);
     expect(done.generation).toMatchObject({ mode: "model", providers: ["openai"], calls: 3, repairs: 0 });
     expect(done.generation.prompts.sort()).toEqual(
-      ["decision-brief-synthesis@2.1.0", "decision-critic@2.1.0", "decision-framing@2.0.0"]
+      ["decision-brief-synthesis@2.2.0", "decision-critic@2.1.0", "decision-framing@2.1.0"]
     );
     expect(done.generation.costUsd).toBeGreaterThan(0);
     expect(done.usage.costUsd).toBeGreaterThanOrEqual(done.generation.costUsd);
@@ -235,5 +235,27 @@ describe("end to end across languages (ADR-001 D8): web queues → Python worker
     }
     expect(evidence.claims.some(c => c.contradicted)).toBe(true);
     expect(await store.forOwner(bob).getEvidence(run.id)).toEqual({ sources: [], claims: [] });
+  });
+
+  it("carries approved memory into the next run, with provenance (TS approves → worker reads → TS shows)", async () => {
+    const { repo, project, run } = await aliceRun();
+    const drain = () => spawnSync("uv", ["run", "--no-sync", "--directory", workerDir, "python", "-m", "tests.e2e_fake_model"], {
+      env: { ...process.env, DATABASE_URL: workerUrl }, encoding: "utf8", timeout: 120_000
+    });
+    expect(drain().status).toBe(0);
+    const proposals = (await repo.listMemories(project.id, { status: "proposed" }))!;
+    expect(proposals.length).toBeGreaterThan(0); // the brief's proposed_memory_updates, not yet remembered
+    expect(await repo.listMemories(project.id, {})).toEqual([]);
+    await repo.approveMemory(proposals[0].id, {});
+    await repo.createMemory(project.id, { kind: "goal", content: "Reach 20 paying clinics by June." });
+    await repo.acceptRun(run.id);
+
+    const next = (await repo.createRun(project.id, { prompt: "Should we raise the pilot price next quarter?" }, OPTS))!.run;
+    expect(drain().status).toBe(0);
+    const remembered = await repo.getRememberedContext(next.id);
+    expect(remembered[0]).toMatchObject({ ref: "D1", kind: "decision_record" }); // the accepted decision comes first
+    expect(remembered.some(r => r.kind === "goal" && r.content === "Reach 20 paying clinics by June.")).toBe(true);
+    expect(remembered.every(r => r.memoryId || r.decisionId)).toBe(true);
+    expect(await store.forOwner(bob).getRememberedContext(next.id)).toEqual([]);
   });
 });

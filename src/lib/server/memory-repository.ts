@@ -3,7 +3,13 @@ import type {
   CreateProjectInput, Project, RunBudget, RunEvent, RunEvidence, StartRunInput, ThoughtRun, UpdateProjectInput
 } from "@/lib/domain/types";
 import {
-  ACTIVE_STATUSES, assertOwnerId, IdempotencyConflictError, ProjectArchivedError, RateLimitError, RunStateError,
+  EXPORT_SCHEMA_VERSION,
+  type ApproveMemoryInput, type CorrectMemoryInput, type CreateMemoryInput, type Decision, type DecisionOutcome, type Memory,
+  type MemoryFilter, type OutcomeInput, type RememberedContext, type ReviseDecisionInput
+} from "@/lib/domain/memory";
+import {
+  ACTIVE_STATUSES, assertOwnerId, DecisionStateError, IdempotencyConflictError, MemoryStateError, ProjectArchivedError,
+  RateLimitError, RunStateError, SensitiveConfirmationError,
   type CreateRunOptions, type OwnerScopedRepository, type Store
 } from "./repository";
 
@@ -21,6 +27,9 @@ export class MemoryStore implements Store {
   readonly runs = new Map<string, StoredRun>();
   readonly events = new Map<string, RunEvent[]>();
   readonly evidence = new Map<string, RunEvidence>();
+  readonly memories = new Map<string, Owned<Memory> & { projectId: string }>();
+  readonly decisions = new Map<string, Owned<Decision> & { projectId: string }>();
+  readonly remembered = new Map<string, RememberedContext[]>();
 
   forOwner(ownerId: string): OwnerScopedRepository {
     assertOwnerId(ownerId);
@@ -165,7 +174,175 @@ class MemoryOwnerRepository implements OwnerScopedRepository {
     if (!run) return null;
     if (run.status === "completed") return strip(run);
     if (run.status !== "awaiting_user_review") throw new RunStateError(runId, run.status);
-    return this.save(run, { status: "completed" });
+    const saved = this.save(run, { status: "completed" });
+    if (run.result?.schemaVersion === "decision-brief.v1" && ![...this.store.decisions.values()].some(d => d.sourceRunId === runId)) {
+      const b = run.result.data;
+      this.newDecision(run.projectId, {
+        origin: "accepted_brief", sourceRunId: runId, question: b.decision_question, choice: b.recommendation.summary,
+        rationale: b.recommendation.rationale, alternatives: b.alternatives, assumptions: b.key_assumptions,
+        confidence: b.confidence.level, reviewTriggers: b.what_would_change, nextActions: b.next_actions
+      });
+    }
+    return saved;
+  }
+
+  // --- memory and decision journal (mirrors postgres-memory.ts for route tests) -----------
+  private ownMemory(id: string) {
+    const m = this.store.memories.get(id);
+    return m && m.ownerId === this.ownerId ? m : undefined;
+  }
+  private plainMemory(m: Owned<Memory> & { projectId: string }): Memory {
+    const copy: Partial<typeof m> = { ...m };
+    delete copy.ownerId;
+    delete copy.projectId;
+    return copy as Memory;
+  }
+  private putMemory(projectId: string, m: Memory): Memory {
+    this.store.memories.set(m.id, { ...m, ownerId: this.ownerId, projectId });
+    return m;
+  }
+  async getRememberedContext(runId: string): Promise<RememberedContext[]> {
+    return this.ownRun(runId) ? [...(this.store.remembered.get(runId) ?? [])] : [];
+  }
+  async listMemories(projectId: string, filter: MemoryFilter): Promise<Memory[] | null> {
+    if (!this.ownProject(projectId)) return null;
+    const status = filter.status ?? "active";
+    return [...this.store.memories.values()]
+      .filter(m => m.ownerId === this.ownerId && m.projectId === projectId && (status === "all" || m.status === status))
+      .filter(m => !filter.kind || m.kind === filter.kind)
+      .filter(m => !filter.q || m.content.toLowerCase().includes(filter.q.toLowerCase()))
+      .map(m => this.plainMemory(m));
+  }
+  async createMemory(projectId: string, input: CreateMemoryInput): Promise<Memory | null> {
+    if (!this.ownProject(projectId)) return null;
+    const id = randomUUID();
+    const now = new Date().toISOString();
+    return this.putMemory(projectId, {
+      id, lineageId: id, version: 1, supersedesId: null, kind: input.kind, content: input.content, status: "active", origin: "user",
+      edited: false, sensitivity: "normal", confidence: input.confidence ?? null, sourceRunId: null, observedAt: now, createdAt: now,
+      reviewedAt: now, validFrom: now, validTo: null
+    });
+  }
+  async approveMemory(memoryId: string, input: ApproveMemoryInput): Promise<Memory | null> {
+    const m = this.ownMemory(memoryId);
+    if (!m) return null;
+    if (m.status === "active") return this.plainMemory(m);
+    if (m.status !== "proposed") throw new MemoryStateError(memoryId, m.status);
+    if (m.sensitivity === "sensitive" && input.confirmSensitive !== true) throw new SensitiveConfirmationError(memoryId);
+    const content = input.content ?? m.content;
+    const kind = input.kind ?? m.kind;
+    const now = new Date().toISOString();
+    return this.putMemory(m.projectId, {
+      ...this.plainMemory(m), status: "active", content, kind, edited: content !== m.content || kind !== m.kind,
+      reviewedAt: now, validFrom: now
+    });
+  }
+  async rejectMemory(memoryId: string): Promise<Memory | null> {
+    const m = this.ownMemory(memoryId);
+    if (!m) return null;
+    if (m.status === "rejected") return this.plainMemory(m);
+    if (m.status !== "proposed") throw new MemoryStateError(memoryId, m.status);
+    return this.putMemory(m.projectId, { ...this.plainMemory(m), status: "rejected", reviewedAt: new Date().toISOString() });
+  }
+  async correctMemory(memoryId: string, input: CorrectMemoryInput): Promise<Memory | null> {
+    const m = this.ownMemory(memoryId);
+    if (!m) return null;
+    if (m.status !== "active") throw new MemoryStateError(memoryId, m.status);
+    const now = new Date().toISOString();
+    this.putMemory(m.projectId, { ...this.plainMemory(m), status: "superseded", validTo: now });
+    return this.putMemory(m.projectId, {
+      ...this.plainMemory(m), id: randomUUID(), version: m.version + 1, supersedesId: m.id, content: input.content,
+      kind: input.kind ?? m.kind, confidence: input.confidence === undefined ? m.confidence : input.confidence, origin: "user",
+      status: "active", sourceRunId: null, createdAt: now, observedAt: now, reviewedAt: now, validFrom: now, validTo: null
+    });
+  }
+  async memoryHistory(memoryId: string): Promise<Memory[] | null> {
+    const m = this.ownMemory(memoryId);
+    if (!m) return null;
+    return [...this.store.memories.values()]
+      .filter(x => x.lineageId === m.lineageId)
+      .sort((a, b) => a.version - b.version)
+      .map(x => this.plainMemory(x));
+  }
+  async deleteMemory(memoryId: string): Promise<boolean> {
+    const m = this.ownMemory(memoryId);
+    if (!m) return false;
+    for (const [id, x] of this.store.memories) if (x.lineageId === m.lineageId) this.store.memories.delete(id);
+    return true;
+  }
+  private newDecision(
+    projectId: string,
+    v: Omit<Decision, "id" | "version" | "supersedesId" | "status" | "createdAt" | "supersededAt" | "outcomes">
+  ): Decision {
+    const mine = [...this.store.decisions.values()].filter(d => d.projectId === projectId && d.ownerId === this.ownerId);
+    const active = mine.find(d => d.status === "active");
+    const now = new Date().toISOString();
+    if (active) this.store.decisions.set(active.id, { ...active, status: "superseded", supersededAt: now });
+    const d: Decision = {
+      ...v, id: randomUUID(), version: mine.length + 1, supersedesId: active?.id ?? null, status: "active", createdAt: now,
+      supersededAt: null, outcomes: []
+    };
+    this.store.decisions.set(d.id, { ...d, ownerId: this.ownerId, projectId });
+    return d;
+  }
+  private plainDecision(d: Owned<Decision> & { projectId: string }): Decision {
+    const copy: Partial<typeof d> = { ...d };
+    delete copy.ownerId;
+    delete copy.projectId;
+    return copy as Decision;
+  }
+  async listDecisions(projectId: string): Promise<Decision[] | null> {
+    if (!this.ownProject(projectId)) return null;
+    return [...this.store.decisions.values()]
+      .filter(d => d.ownerId === this.ownerId && d.projectId === projectId)
+      .sort((a, b) => b.version - a.version)
+      .map(d => this.plainDecision(d));
+  }
+  async reviseDecision(decisionId: string, input: ReviseDecisionInput): Promise<Decision | null> {
+    const d = this.store.decisions.get(decisionId);
+    if (!d || d.ownerId !== this.ownerId) return null;
+    if (d.status !== "active") throw new DecisionStateError(decisionId);
+    return this.newDecision(d.projectId, {
+      origin: "user_revision", sourceRunId: null, question: d.question, choice: input.choice, rationale: input.rationale,
+      alternatives: d.alternatives, assumptions: d.assumptions,
+      confidence: input.confidence === undefined ? d.confidence : input.confidence,
+      reviewTriggers: d.reviewTriggers, nextActions: d.nextActions
+    });
+  }
+  async addOutcome(decisionId: string, input: OutcomeInput): Promise<DecisionOutcome | null> {
+    const d = this.store.decisions.get(decisionId);
+    if (!d || d.ownerId !== this.ownerId) return null;
+    const outcome: DecisionOutcome = {
+      id: randomUUID(), result: input.result, observedOutcome: input.observedOutcome, observedOn: input.observedOn,
+      notes: input.notes || null, createdAt: new Date().toISOString()
+    };
+    this.store.decisions.set(decisionId, { ...d, outcomes: [...d.outcomes, outcome] });
+    return outcome;
+  }
+  async deleteProject(projectId: string): Promise<boolean> {
+    if (!this.ownProject(projectId)) return false;
+    this.store.projects.delete(projectId);
+    for (const [id, r] of this.store.runs) {
+      if (r.projectId !== projectId) continue;
+      this.store.runs.delete(id);
+      this.store.events.delete(id);
+      this.store.evidence.delete(id);
+    }
+    for (const [id, m] of this.store.memories) if (m.projectId === projectId) this.store.memories.delete(id);
+    for (const [id, d] of this.store.decisions) if (d.projectId === projectId) this.store.decisions.delete(id);
+    return true;
+  }
+  async exportProject(projectId: string): Promise<Record<string, unknown> | null> {
+    const project = this.ownProject(projectId);
+    if (!project) return null;
+    return {
+      schema: EXPORT_SCHEMA_VERSION,
+      exportedAt: new Date().toISOString(),
+      project: strip(project),
+      runs: [...this.store.runs.values()].filter(r => r.projectId === projectId && r.ownerId === this.ownerId).map(r => strip(r)),
+      memories: await this.listMemories(projectId, { status: "all" }),
+      decisions: ((await this.listDecisions(projectId)) ?? []).reverse()
+    };
   }
   async resumeRun(runId: string, increment: RunBudget): Promise<ThoughtRun | null> {
     const run = this.ownRun(runId);

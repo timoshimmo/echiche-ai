@@ -7,7 +7,7 @@ versioned JSON contracts in ``contracts/``.
 
 M5 status: durable runs (M3), a model-backed reasoning provider (M4), and research with
 provenance: Brave discovery, pages fetched and read by the worker itself, claims tied to
-exact quotes and independently verified (M5).
+exact quotes and independently verified (M5); project memory and proposals (M6).
 """
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"

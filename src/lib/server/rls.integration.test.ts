@@ -179,12 +179,18 @@ describe("UPDATE", () => {
 });
 
 describe("DELETE", () => {
-  it("denied for everyone, including the owner, until export/delete ships (M6)", async () => {
-    for (const table of ["projects", "thought_runs", "run_events"]) {
+  it("owners may delete only their own projects (M6); runs and events are never deleted directly", async () => {
+    for (const table of ["thought_runs", "run_events"]) {
       await expect(asUser(alice, tx => tx.unsafe(`delete from echiche.${table}`))).rejects.toMatchObject(PERMISSION_DENIED);
       await expect(asUser(bob, tx => tx.unsafe(`delete from echiche.${table}`))).rejects.toMatchObject(PERMISSION_DENIED);
     }
     await expect(asUser(alice, tx => tx`truncate echiche.projects cascade`)).rejects.toMatchObject(PERMISSION_DENIED);
+    const [{ n: before }] = await admin`select count(*)::int as n from echiche.projects`;
+    const bobDeleted = await asUser(bob, tx => tx`delete from echiche.projects returning id`);
+    expect(bobDeleted).toHaveLength(0); // RLS: Bob's delete matches none of Alice's rows
+    const [{ n: after }] = await admin`select count(*)::int as n from echiche.projects`;
+    expect(after).toBe(before);
+    await expect(asUser(null, tx => tx`delete from echiche.projects returning id`)).resolves.toHaveLength(0);
   });
 });
 

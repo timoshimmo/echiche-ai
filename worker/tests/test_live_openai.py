@@ -13,7 +13,7 @@ from decimal import Decimal
 
 import pytest
 
-from echiche_worker.contracts import DecisionFrameV1
+from echiche_worker.contracts import DecisionFrameV2
 from echiche_worker.llm import OPENAI_PRICES
 from echiche_worker.model_provider import ModelReasoningProvider, ModelSettings
 from echiche_worker.prompts import PromptRegistry
@@ -43,8 +43,8 @@ def test_live_framing_call_returns_a_valid_decision_frame() -> None:
         remaining_cost_usd=Decimal("0.05"),
     )
     output = provider.run_stage("planning", ctx).output
-    assert getattr(output, "data_schema", None) == "decision-frame.v1"
-    DecisionFrameV1.model_validate(getattr(output, "data", None))
+    assert getattr(output, "data_schema", None) == "decision-frame.v2"
+    DecisionFrameV2.model_validate(getattr(output, "data", None))
     call = ctx.calls[-1]
     assert call.outcome == "ok" and call.input_tokens > 0 and call.output_tokens > 0
     print(f"\nlive call ok: model={call.model} in={call.input_tokens} out={call.output_tokens} cost=${call.cost_usd}")
