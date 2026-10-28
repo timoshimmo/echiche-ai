@@ -11,11 +11,11 @@ export async function GET(_request: Request, context: { params: Promise<{ runId:
   const auth = await requireUser(ROUTE);
   if ("response" in auth) return auth.response;
   const id = resourceIdSchema.safeParse((await context.params).runId);
-  if (!id.success) return notFound("Run");
+  if (!id.success) return notFound("Run", { route: ROUTE, userId: auth.user.id });
   try {
     const repo = getStore().forOwner(auth.user.id);
     const run = await repo.getRun(id.data);
-    if (!run) return notFound("Run");
+    if (!run) return notFound("Run", { route: ROUTE, userId: auth.user.id });
     return ok({
       ...run,
       events: await repo.listEvents(id.data),

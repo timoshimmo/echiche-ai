@@ -22,7 +22,9 @@ export type ServerConfig = {
   supabasePublishableKey: string;
   /** Exact origin the app is served from; used for CSRF origin checks and auth redirects. */
   appOrigin: string;
-  limits: { projectsPerHour: number; runsPerHour: number };
+  limits: { projectsPerHour: number; runsPerHour: number; exportsPerHour: number; journalWritesPerHour: number };
+  /** Rolling-24-hour spend ceilings; each run's cap (and each resume) is reserved in full (M8, F1). */
+  spend: { userDailyUsd: number; globalDailyUsd: number };
   /** Caps given to every new run, and the amount a user's explicit "resume" adds (never automatic). */
   runBudget: { initial: RunBudget; resumeIncrement: RunBudget };
   secureCookies: boolean;
@@ -66,6 +68,10 @@ const envSchema = z.object({
   APP_ORIGIN: optional(z.url({ protocol: /^https?$/, error: "APP_ORIGIN must be an http(s) URL" })),
   PROJECT_CREATE_LIMIT_PER_HOUR: limit("PROJECT_CREATE_LIMIT_PER_HOUR", 30),
   RUN_CREATE_LIMIT_PER_HOUR: limit("RUN_CREATE_LIMIT_PER_HOUR", 20),
+  EXPORT_LIMIT_PER_HOUR: limit("EXPORT_LIMIT_PER_HOUR", 10),
+  JOURNAL_WRITE_LIMIT_PER_HOUR: limit("JOURNAL_WRITE_LIMIT_PER_HOUR", 300),
+  USER_DAILY_SPEND_LIMIT_USD: limit("USER_DAILY_SPEND_LIMIT_USD", 5, 0, 100000, false),
+  GLOBAL_DAILY_SPEND_LIMIT_USD: limit("GLOBAL_DAILY_SPEND_LIMIT_USD", 50, 0, 1000000, false),
   // Per-run caps (blueprint §6.1 example: 18 steps, 8 searches, 600 s). Bounds match the DB checks.
   RUN_BUDGET_MAX_STEPS: limit("RUN_BUDGET_MAX_STEPS", 18, 1, 1000),
   RUN_BUDGET_MAX_ACTIVE_SECONDS: limit("RUN_BUDGET_MAX_ACTIVE_SECONDS", 600, 1, 86400),
@@ -120,6 +126,13 @@ export function parseServerConfig(env: Record<string, string | undefined>): Serv
     issues.push("APP_ORIGIN is required when NODE_ENV=production");
   }
 
+  if (e.USER_DAILY_SPEND_LIMIT_USD < e.RUN_BUDGET_MAX_COST_USD) {
+    issues.push("USER_DAILY_SPEND_LIMIT_USD must be at least RUN_BUDGET_MAX_COST_USD, or no run could start");
+  }
+  if (e.GLOBAL_DAILY_SPEND_LIMIT_USD < e.USER_DAILY_SPEND_LIMIT_USD) {
+    issues.push("GLOBAL_DAILY_SPEND_LIMIT_USD must be at least USER_DAILY_SPEND_LIMIT_USD");
+  }
+
   if (issues.length) throw new ConfigError(issues);
   return {
     nodeEnv: e.NODE_ENV,
@@ -127,7 +140,11 @@ export function parseServerConfig(env: Record<string, string | undefined>): Serv
     supabaseUrl: supabaseUrl.origin,
     supabasePublishableKey: e.SUPABASE_PUBLISHABLE_KEY,
     appOrigin,
-    limits: { projectsPerHour: e.PROJECT_CREATE_LIMIT_PER_HOUR, runsPerHour: e.RUN_CREATE_LIMIT_PER_HOUR },
+    limits: {
+      projectsPerHour: e.PROJECT_CREATE_LIMIT_PER_HOUR, runsPerHour: e.RUN_CREATE_LIMIT_PER_HOUR,
+      exportsPerHour: e.EXPORT_LIMIT_PER_HOUR, journalWritesPerHour: e.JOURNAL_WRITE_LIMIT_PER_HOUR
+    },
+    spend: { userDailyUsd: e.USER_DAILY_SPEND_LIMIT_USD, globalDailyUsd: e.GLOBAL_DAILY_SPEND_LIMIT_USD },
     runBudget: {
       initial: {
         maxSteps: e.RUN_BUDGET_MAX_STEPS, maxActiveSeconds: e.RUN_BUDGET_MAX_ACTIVE_SECONDS,

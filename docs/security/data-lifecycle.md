@@ -19,6 +19,8 @@ _Status as of M6 (2026-10-28). Items marked **open** need a decision before the 
 | Memories (proposed, active, superseded, rejected versions), with provenance | `echiche.memories` | **Yes**: statements about the user's project; proposals are kept only as proposals until reviewed |
 | Decision versions and outcomes | `echiche.decisions`, `echiche.decision_outcomes` | **Yes** |
 | What each run was given from memory (snapshot) | `echiche.run_memory_context` | **Yes**: copies of remembered items; deleted with the run or the memory |
+| Usage ledger for abuse limits and spend ceilings (M8) | `echiche.usage_ledger` | **Pseudonymous metadata only**: user ID, kind of action, reserved $, time; no project ID or content. Survives project deletion (so limits can't be reset), removed with the account; operator deletes rows older than 30 days |
+| Web and worker logs | Render log stream | Event names, IDs (including the pseudonymous user ID since M8), status and error codes; never prompts, content, emails or provider messages. Retention per the Render plan (confirm before the pilot) |
 | Worker liveness (worker ID, version, current run ID) | `echiche.worker_heartbeats` | No |
 | Application logs | hosting platform stdout | No: route, event, error code, IDs only (enforced in `log.ts` conventions and tests) |
 | Supabase Auth logs | Supabase | Email, IP and user agent (provider-side) |

@@ -29,13 +29,23 @@ describe("parseServerConfig", () => {
       supabaseUrl: "http://127.0.0.1:54321",
       supabasePublishableKey: BASE.SUPABASE_PUBLISHABLE_KEY,
       appOrigin: "http://localhost:3000",
-      limits: { projectsPerHour: 30, runsPerHour: 20 },
+      limits: { projectsPerHour: 30, runsPerHour: 20, exportsPerHour: 10, journalWritesPerHour: 300 },
+      spend: { userDailyUsd: 5, globalDailyUsd: 50 },
       runBudget: {
         initial: { maxSteps: 18, maxActiveSeconds: 600, maxResearchCalls: 8, maxCostUsd: 0.5 },
         resumeIncrement: { maxSteps: 9, maxActiveSeconds: 300, maxResearchCalls: 4, maxCostUsd: 0.25 }
       },
       secureCookies: false
     });
+  });
+
+  it("rejects spend ceilings that could never admit a run (M8, F1)", () => {
+    expect(issuesOf({ ...BASE, USER_DAILY_SPEND_LIMIT_USD: "0.25" })).toContain(
+      "USER_DAILY_SPEND_LIMIT_USD must be at least RUN_BUDGET_MAX_COST_USD, or no run could start");
+    expect(issuesOf({ ...BASE, GLOBAL_DAILY_SPEND_LIMIT_USD: "1" })).toContain(
+      "GLOBAL_DAILY_SPEND_LIMIT_USD must be at least USER_DAILY_SPEND_LIMIT_USD");
+    expect(parseServerConfig({ ...BASE, USER_DAILY_SPEND_LIMIT_USD: "2", GLOBAL_DAILY_SPEND_LIMIT_USD: "20" }).spend)
+      .toEqual({ userDailyUsd: 2, globalDailyUsd: 20 });
   });
 
   it("accepts a complete production config and enables secure cookies", () => {

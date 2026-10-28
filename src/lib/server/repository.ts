@@ -27,7 +27,7 @@ export interface OwnerScopedRepository {
    * Queues a run. null when the project does not exist for this owner.
    * With an idempotency key, a repeat of the same request returns the original run
    * (`created: false`); reusing the key for a different request throws IdempotencyConflictError.
-   * Throws ProjectArchivedError / RateLimitError.
+   * Throws ProjectArchivedError / RateLimitError / SpendLimitError (the run's spend cap is reserved).
    */
   createRun(projectId: string, input: StartRunInput, options: CreateRunOptions): Promise<{ run: ThoughtRun; created: boolean } | null>;
   getRun(id: string): Promise<ThoughtRun | null>;
@@ -72,14 +72,24 @@ export interface OwnerScopedRepository {
   acceptRun(runId: string): Promise<ThoughtRun | null>;
   /**
    * paused_for_budget → queued, raising each cap by `increment` (explicit user approval).
+   * The increment's spend is reserved against the daily ceilings (SpendLimitError).
    * Idempotent: a run that is no longer paused is returned unchanged if queued or active.
    * RunStateError for finished runs.
    */
-  resumeRun(runId: string, increment: RunBudget): Promise<ThoughtRun | null>;
+  resumeRun(runId: string, increment: RunBudget, spend: SpendLimits): Promise<ThoughtRun | null>;
+  /**
+   * Records one rate-limited action in the usage ledger, or throws RateLimitError when the owner
+   * already did `maxPerHour` of them in the last hour. The ledger survives project deletion.
+   */
+  recordUsage(kind: UsageKind, maxPerHour: number): Promise<void>;
 }
 
 /** budget = the operator's configured caps; the router may tighten them per tier (ADR-010). */
-export type CreateRunOptions = { maxPerHour: number; budget: RunBudget; idempotencyKey?: string };
+/** Daily spend ceilings (rolling 24 h). A run's spend cap, and each resume's increment, is reserved in full. */
+export type SpendLimits = { userDailyUsd: number; globalDailyUsd: number };
+export type CreateRunOptions = { maxPerHour: number; budget: RunBudget; spend: SpendLimits; idempotencyKey?: string };
+/** Kinds of rate-limited action recorded in the usage ledger (migration 0009). */
+export type UsageKind = "export" | "journal_write";
 
 export interface Store {
   /** Throws if ownerId is not a UUID. */
@@ -111,9 +121,18 @@ export class IdempotencyConflictError extends Error {
 
 export class RateLimitError extends Error {
   readonly code = "RATE_LIMITED";
-  constructor(readonly resource: "projects" | "runs", readonly retryAfterSeconds: number) {
+  constructor(readonly resource: "projects" | "runs" | "exports" | "journal changes", readonly retryAfterSeconds: number) {
     super(`Hourly ${resource} limit reached`);
     this.name = "RateLimitError";
+  }
+}
+
+/** Starting or resuming the run would reserve more than the daily spend ceiling allows. */
+export class SpendLimitError extends Error {
+  readonly code = "SPEND_LIMIT_REACHED";
+  constructor(readonly scope: "user" | "global") {
+    super(`Daily ${scope} spend ceiling reached`);
+    this.name = "SpendLimitError";
   }
 }
 

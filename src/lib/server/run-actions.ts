@@ -20,11 +20,11 @@ export function runAction(name: "cancel" | "accept" | "resume", act: (repo: Owne
     const auth = await requireUser(route);
     if ("response" in auth) return auth.response;
     const id = resourceIdSchema.safeParse((await context.params).runId);
-    if (!id.success) return notFound("Run");
+    if (!id.success) return notFound("Run", { route, userId: auth.user.id });
     try {
       const run = await act(getStore().forOwner(auth.user.id), id.data);
-      if (!run) return notFound("Run");
-      log("info", `run_${name}`, { route, run_id: run.id, status: run.status });
+      if (!run) return notFound("Run", { route, userId: auth.user.id });
+      log("info", `run_${name}`, { route, user_id: auth.user.id, run_id: run.id, status: run.status });
       return ok(run);
     } catch (error) {
       return handleUnexpected(error, route);

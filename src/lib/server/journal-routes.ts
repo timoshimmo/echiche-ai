@@ -1,5 +1,6 @@
 import type { z } from "zod";
 import { resourceIdSchema } from "@/lib/domain/validation";
+import { getServerConfig } from "./config";
 import { getStore } from "./container";
 import { apiError, checkOrigin, handleUnexpected, notFound, ok, readJsonBody, requireUser } from "./http";
 import { log } from "./log";
@@ -18,6 +19,8 @@ export function journalRoute<S extends z.ZodType | null>(options: {
   param: string;
   what: What;
   mutating: boolean;
+  /** Rate-limited in the usage ledger: every mutating route counts as a journal write; export has its own limit. */
+  usage?: "export";
   body: S;
   invalid?: string;
   status?: number;
@@ -31,7 +34,7 @@ export function journalRoute<S extends z.ZodType | null>(options: {
     const auth = await requireUser(options.route);
     if ("response" in auth) return auth.response;
     const id = resourceIdSchema.safeParse((await context.params)[options.param]);
-    if (!id.success) return notFound(options.what);
+    if (!id.success) return notFound(options.what, { route: options.route, userId: auth.user.id });
     let input: unknown = undefined;
     if (options.body) {
       const body = await readJsonBody(request);
@@ -41,9 +44,17 @@ export function journalRoute<S extends z.ZodType | null>(options: {
       input = parsed.data;
     }
     try {
-      const result = await options.act(getStore().forOwner(auth.user.id), id.data, input as never, request);
-      if (result === null || result === false) return notFound(options.what);
-      if (options.mutating) log("info", "journal_change", { route: options.route });
+      const repo = getStore().forOwner(auth.user.id);
+      const limits = getServerConfig().limits;
+      if (options.usage === "export") await repo.recordUsage("export", limits.exportsPerHour);
+      else if (options.mutating) await repo.recordUsage("journal_write", limits.journalWritesPerHour);
+      const result = await options.act(repo, id.data, input as never, request);
+      if (result === null || result === false) return notFound(options.what, { route: options.route, userId: auth.user.id });
+      // Audit trail (blueprint §8.1): every change, export and deletion, with who and which resource.
+      if (options.mutating || options.usage === "export") {
+        log("info", options.usage === "export" ? "project_exported" : "journal_change",
+          { route: options.route, user_id: auth.user.id, resource: options.what, resource_id: id.data });
+      }
       if (result instanceof Response) return result;
       return ok(result === true ? { deleted: true } : result, options.status ?? 200);
     } catch (error) {

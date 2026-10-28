@@ -29,6 +29,8 @@ jobs:
       - run: npm test
       # Build runs without any runtime configuration: config is validated at server start, not build.
       - run: npm run build
+      # No credential in any tracked file (M8). Test placeholders are allow-listed in the script.
+      - run: node scripts/ci/scan-secrets.mjs
       - name: Client bundle must not contain server configuration
         run: |
           if grep -rlE "DATABASE_URL|SUPABASE_URL|SUPABASE_PUBLISHABLE_KEY|sb_secret_|service_role|OPENAI_API_KEY" .next/static; then

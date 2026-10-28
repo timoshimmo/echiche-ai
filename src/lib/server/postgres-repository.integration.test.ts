@@ -10,7 +10,8 @@ import { DataIntegrityError, IdempotencyConflictError, ProjectArchivedError, Rat
 const admin = adminSql();
 const store = new PostgresStore(process.env.DATABASE_URL!);
 const BUDGET: RunBudget = { maxSteps: 18, maxActiveSeconds: 600, maxResearchCalls: 8, maxCostUsd: 0.5 };
-const OPTS = { maxPerHour: 100, budget: BUDGET };
+const SPEND = { userDailyUsd: 1000, globalDailyUsd: 10000 };
+const OPTS = { maxPerHour: 100, budget: BUDGET, spend: SPEND };
 let alice: string;
 let bob: string;
 
@@ -106,16 +107,16 @@ describe("PostgresStore as echiche_web (owner-scoped, real Postgres)", () => {
 
   it("resumes a budget-paused run only by explicitly raising its caps", async () => {
     const { repo, run } = await aliceRun();
-    await expect(repo.resumeRun(run.id, BUDGET)).resolves.toMatchObject({ status: "queued" }); // no-op, still queued
+    await expect(repo.resumeRun(run.id, BUDGET, SPEND)).resolves.toMatchObject({ status: "queued" }); // no-op, still queued
     await workerSets(run.id, "paused_for_budget", { error_code: "BUDGET_STEPS", steps_used: 18 });
     const inc: RunBudget = { maxSteps: 9, maxActiveSeconds: 300, maxResearchCalls: 4, maxCostUsd: 0.25 };
-    const resumed = await repo.resumeRun(run.id, inc);
+    const resumed = await repo.resumeRun(run.id, inc, SPEND);
     // the low tier's 5/180/0/0.10 plus the increase
     expect(resumed).toMatchObject({ status: "queued", errorCode: null, budget: { maxSteps: 14, maxActiveSeconds: 480, maxResearchCalls: 4, maxCostUsd: 0.35 } });
-    const again = await repo.resumeRun(run.id, inc); // idempotent: no double increase
+    const again = await repo.resumeRun(run.id, inc, SPEND); // idempotent: no double increase
     expect(again?.budget.maxSteps).toBe(14);
     await workerSets(run.id, "failed");
-    await expect(repo.resumeRun(run.id, inc)).rejects.toBeInstanceOf(RunStateError);
+    await expect(repo.resumeRun(run.id, inc, SPEND)).rejects.toBeInstanceOf(RunStateError);
   });
 
   it("gives another owner nothing: reads and every action behave as not found", async () => {
@@ -130,7 +131,7 @@ describe("PostgresStore as echiche_web (owner-scoped, real Postgres)", () => {
     expect(await asBob.createRun(project.id, { prompt: "Bob on Alice's project" }, OPTS)).toBeNull();
     expect(await asBob.cancelRun(run.id)).toBeNull();
     expect(await asBob.acceptRun(run.id)).toBeNull();
-    expect(await asBob.resumeRun(run.id, BUDGET)).toBeNull();
+    expect(await asBob.resumeRun(run.id, BUDGET, SPEND)).toBeNull();
     expect((await store.forOwner(alice).getRun(run.id))?.status).toBe("queued");
   });
 

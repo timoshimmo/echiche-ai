@@ -14,10 +14,10 @@ export async function GET(_request: Request, context: Context) {
   const auth = await requireUser(ROUTE);
   if ("response" in auth) return auth.response;
   const id = resourceIdSchema.safeParse((await context.params).projectId);
-  if (!id.success) return notFound("Project");
+  if (!id.success) return notFound("Project", { route: ROUTE, userId: auth.user.id });
   try {
     const repo = getStore().forOwner(auth.user.id);
-    if (!(await repo.getProject(id.data))) return notFound("Project");
+    if (!(await repo.getProject(id.data))) return notFound("Project", { route: ROUTE, userId: auth.user.id });
     return ok(await repo.listRuns(id.data));
   } catch (error) {
     return handleUnexpected(error, ROUTE);
@@ -35,7 +35,7 @@ export async function POST(request: Request, context: Context) {
   const auth = await requireUser(ROUTE);
   if ("response" in auth) return auth.response;
   const id = resourceIdSchema.safeParse((await context.params).projectId);
-  if (!id.success) return notFound("Project");
+  if (!id.success) return notFound("Project", { route: ROUTE, userId: auth.user.id });
 
   const rawKey = request.headers.get("idempotency-key");
   const key = rawKey === null ? undefined : idempotencyKeySchema.safeParse(rawKey);
@@ -52,11 +52,12 @@ export async function POST(request: Request, context: Context) {
     const outcome = await getStore().forOwner(auth.user.id).createRun(id.data, parsed.data, {
       maxPerHour: config.limits.runsPerHour,
       budget: config.runBudget.initial,
+      spend: config.spend,
       idempotencyKey: key?.data
     });
-    if (!outcome) return notFound("Project");
+    if (!outcome) return notFound("Project", { route: ROUTE, userId: auth.user.id });
     if (!outcome.created) return ok(outcome.run, 200, { "idempotent-replayed": "true" });
-    log("info", "run_queued", { route: ROUTE, run_id: outcome.run.id, project_id: id.data, tier: outcome.run.route.tier });
+    log("info", "run_queued", { route: ROUTE, user_id: auth.user.id, run_id: outcome.run.id, project_id: id.data, tier: outcome.run.route.tier });
     return ok(outcome.run, 202, { location: `/api/runs/${outcome.run.id}` });
   } catch (error) {
     return handleUnexpected(error, ROUTE);

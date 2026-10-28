@@ -21,5 +21,7 @@ export async function createTestUser(admin: postgres.Sql): Promise<string> {
 export async function resetData(admin: postgres.Sql): Promise<void> {
   await admin`truncate echiche.projects, echiche.thought_runs, echiche.run_events, echiche.run_stage_outputs cascade`;
   await admin`delete from echiche.worker_heartbeats`;
+  // Global spend ceilings sum everyone's reservations, so a disposable test database starts empty.
+  await admin`truncate echiche.usage_ledger`;
   await admin`delete from auth.users where email like 'test-%@example.test'`;
 }

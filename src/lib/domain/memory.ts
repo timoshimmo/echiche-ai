@@ -1,3 +1,4 @@
+import "./zod-setup";
 import { z } from "zod";
 
 /** Memory and decision journal (M6, ADR-009). Request schemas are strict: unknown keys are rejected. */

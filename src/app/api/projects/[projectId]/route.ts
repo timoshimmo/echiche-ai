@@ -19,10 +19,10 @@ export async function GET(_request: Request, context: Context) {
   const auth = await requireUser(ROUTE);
   if ("response" in auth) return auth.response;
   const id = resourceIdSchema.safeParse((await context.params).projectId);
-  if (!id.success) return notFound("Project");
+  if (!id.success) return notFound("Project", { route: ROUTE, userId: auth.user.id });
   try {
     const project = await getStore().forOwner(auth.user.id).getProject(id.data);
-    return project ? ok(project) : notFound("Project");
+    return project ? ok(project) : notFound("Project", { route: ROUTE, userId: auth.user.id });
   } catch (error) {
     return handleUnexpected(error, ROUTE);
   }
@@ -35,7 +35,7 @@ export async function PATCH(request: Request, context: Context) {
   const auth = await requireUser(ROUTE);
   if ("response" in auth) return auth.response;
   const id = resourceIdSchema.safeParse((await context.params).projectId);
-  if (!id.success) return notFound("Project");
+  if (!id.success) return notFound("Project", { route: ROUTE, userId: auth.user.id });
   const body = await readJsonBody(request);
   if ("response" in body) return body.response;
   const parsed = updateProjectSchema.safeParse(body.value);
@@ -44,7 +44,7 @@ export async function PATCH(request: Request, context: Context) {
   }
   try {
     const project = await getStore().forOwner(auth.user.id).updateProject(id.data, parsed.data);
-    return project ? ok(project) : notFound("Project");
+    return project ? ok(project) : notFound("Project", { route: ROUTE, userId: auth.user.id });
   } catch (error) {
     return handleUnexpected(error, ROUTE);
   }

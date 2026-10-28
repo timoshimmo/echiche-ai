@@ -21,6 +21,13 @@ export function sessionCookieOptions(config: ServerConfig) {
   return { httpOnly: true, secure: config.secureCookies, sameSite: "lax" as const, path: "/" };
 }
 
+/** Marker set by POST /auth/sign-in and required by /auth/callback (login-CSRF defence, M8 F2). */
+export const SIGN_IN_COOKIE = "echiche_signin";
+/** Lives as long as a magic link (Supabase otp_expiry, 15 minutes); only sent to the callback. */
+export function signInCookieOptions(config: ServerConfig) {
+  return { httpOnly: true, secure: config.secureCookies, sameSite: "lax" as const, path: "/auth/callback", maxAge: 900 };
+}
+
 /** Supabase client bound to an arbitrary cookie store (used by middleware). */
 export function createSupabaseClient(config: ServerConfig, cookieMethods: CookieMethodsServer) {
   return createServerClient(config.supabaseUrl, config.supabasePublishableKey, {

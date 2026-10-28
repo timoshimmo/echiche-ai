@@ -1,6 +1,6 @@
-# Echiche (starter, milestone M7)
+# Echiche (starter, milestone M8)
 
-**Version:** 0.7.0 · **Stage:** M7 "Evaluation and adaptive compute" implemented (ADR-010 proposed, awaiting review); next is M8 (production hardening).
+**Version:** 0.8.0 · **Stage:** M8 "Security, privacy and failure-mode review" done ([report](docs/security/review-m8.md); ADR-011 proposed); next is M9 (release-readiness review).
 
 > **Not production-ready yet.** Already in place:
 > - sign-in, per-user isolation (app checks plus row-level security), and CSRF/size/rate limits (M2);
@@ -11,6 +11,8 @@
 > - user-controlled memory and a decision journal (M6). Runs propose memories, and nothing is kept until you approve it. Corrections create new versions. Accepted briefs become versioned decisions with outcomes. Later runs see what was remembered, labelled and dated. Export (JSON) and hard delete are built in.
 >
 > - evaluation and adaptive compute (M7). A deterministic, explainable router sizes each run (quick / standard / deep; the user can override it) and records why. A synthetic benchmark runs the real pipeline offline against baselines in CI, gated on guardrail invariants.
+>
+> - a security, privacy and failure-mode review (M8): one High finding (abuse limits that deleting a project reset) and four Medium ones, all fixed with regression tests. Per-user and global daily spend ceilings, magic links bound to the requesting browser, security headers, an audit trail, an access-control matrix over every route, and a CI secret scan.
 >
 > Still missing before real users: a **live, human-reviewed** evaluation baseline (and quality/cost gates set from it), retention decisions, and the release gates in [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md).
 
@@ -84,6 +86,8 @@ Useful commands: `npm run db:reset` (recreate and re-migrate), `npm run db:new-m
 | `APP_ORIGIN` | production | Exact https origin; used for CSRF checks and auth redirects |
 | `PROJECT_CREATE_LIMIT_PER_HOUR`, `RUN_CREATE_LIMIT_PER_HOUR` | no | Per-user caps, default 30 / 20 |
 | `RUN_BUDGET_MAX_STEPS` / `_ACTIVE_SECONDS` / `_RESEARCH_CALLS` / `_COST_USD` | no | Per-run caps, default 18 / 600 / 8 / 0.50. The cost cap is enforced before every model call (worst case). |
+| `USER_DAILY_SPEND_LIMIT_USD`, `GLOBAL_DAILY_SPEND_LIMIT_USD` | no | Rolling-24-hour spend ceilings, default 5 / 50. Each run's cap and each resume is reserved in full when queued ([ADR-011](docs/decisions/011-usage-ledger-and-spend-ceilings.md)). |
+| `EXPORT_LIMIT_PER_HOUR`, `JOURNAL_WRITE_LIMIT_PER_HOUR` | no | Per-user hourly limits on exports and memory/decision changes, default 10 / 300 |
 
 `OPENAI_API_KEY` is **refused** in the web environment: only the worker may hold it.
 
@@ -115,7 +119,7 @@ CI (`.github/workflows/ci.yml`) has four jobs:
 
 | Job | Runs |
 |---|---|
-| **web** | typecheck, lint, unit tests, build, client-bundle secret scan, production `npm audit` |
+| **web** | typecheck, lint, unit tests (incl. the access matrix over every route), build, repository and client-bundle secret scans, production `npm audit` |
 | **integration** | plain Postgres 16 with the test shim: web integration, cross-language E2E, worker integration |
 | **supabase-stack** | the real local Supabase stack: integration and RLS suites, plus a check that the Auth server rejects a token after logout |
 | **worker** | ruff, pyright strict, pytest, contract-schema freshness, the fake evaluation gates, Docker image build and start |
@@ -160,6 +164,7 @@ Another user's resource returns the **same 404** as a nonexistent one. State-cha
 | `MEMORY_STATE_CONFLICT` / `DECISION_STATE_CONFLICT` / `SENSITIVE_CONFIRMATION_REQUIRED` | 409 | Memory action not allowed in its state / only the current decision can be revised / a sensitive proposal needs explicit confirmation |
 | `PAYLOAD_TOO_LARGE` / `UNSUPPORTED_MEDIA_TYPE` | 413 / 415 | Body limits |
 | `RATE_LIMITED` | 429 | Hourly per-user cap reached (`Retry-After`) |
+| `SPEND_LIMIT_REACHED` | 429 | Starting or resuming the run would exceed the user's or everyone's daily spend ceiling (`Retry-After`) |
 | `RUN_FAILED` | 500 | Run persisted as `failed` with `errorCode` |
 | `CONFIG_INVALID` / `AUTH_UNAVAILABLE` / `STORAGE_UNAVAILABLE` | 503 | Misconfiguration / Auth server down / database down (fail closed) |
 | `INTERNAL_ERROR` | 500 | Anything else (logged by name and code only) |
@@ -183,7 +188,7 @@ src/middleware.ts       page protection + session refresh
 src/lib/domain/         types, Zod schemas, deterministic scaffold (pure)
 src/lib/server/         config, auth, HTTP guards, logging, owner-scoped stores, run service
 src/test/               integration setup, test DB helpers, plain-Postgres shim
-scripts/                test DB preparation; CI auth-revocation check
+scripts/                test DB preparation; CI auth-revocation check and repository secret scan
 supabase/               CLI config.toml and migrations
 worker/                 Python worker (claim loop, executor, store, contracts, prompt registry, OpenAI adapter,
                         Brave adapter, safe page fetcher, research and verification pipeline) + Dockerfile
@@ -193,9 +198,9 @@ evals/                  router cases, decision benchmark, gates, committed fake-
 worker/evals/           evaluation harness: scripted model/search/pages, scoring, CLI
 contracts/              JSON Schemas + shared fixtures
 render.yaml             Render Blueprint (Frankfurt)
-docs/decisions/         ADRs 001–010
+docs/decisions/         ADRs 001–011
 docs/runbooks/          Supabase setup, Render deploy, run operations, evaluation
-docs/security/          data lifecycle: storage, export, deletion, retention
+docs/security/          data lifecycle (storage, export, deletion, retention); M8 security review
 ```
 
 ## Gates still open before real users
@@ -204,7 +209,8 @@ docs/security/          data lifecycle: storage, export, deletion, retention
 2. ~~Claim/source provenance before web research~~ **[M5, done]**; Brave's written confirmation on result use and excerpt storage **[before enabling research for real users]**
 3. ~~In-app export and delete~~ **[M6, done]**; retention decisions and self-service account deletion ([data lifecycle](docs/security/data-lifecycle.md)) **[before pilot]**
 4. Custom SMTP, sign-up policy and other hosted Auth settings ([runbook](docs/runbooks/supabase-setup.md)) **[before pilot]**
-5. Playwright E2E, security review, backup/restore test, monitoring and alerting on worker heartbeats **[M8]**
+5. ~~Security review~~, ~~local backup/restore drill~~ **[M8, done: [report](docs/security/review-m8.md)]**; hosted restore drill, Supabase Auth rate limits and sign-up policy, spend-ceiling values, self-hosted fonts and an **independent** security review **[before pilot / open sign-up]**
+6. Playwright E2E in CI, and alerting on worker heartbeats and stale runs (visibility exists, alerting doesn't) **[M9 readiness]**
 
 ## Claude engineering prompt kit
 

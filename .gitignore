@@ -2,9 +2,9 @@ node_modules/
 .next/
 out/
 coverage/
-.env
-.env.local
-.env.*.local
+# Every env file except the placeholder template (M8: .env.production etc. were not ignored).
+.env*
+!.env.example
 *.log
 .DS_Store
 *.bak

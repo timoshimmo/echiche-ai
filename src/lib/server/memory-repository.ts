@@ -10,8 +10,8 @@ import {
 } from "@/lib/domain/memory";
 import {
   ACTIVE_STATUSES, assertOwnerId, DecisionStateError, IdempotencyConflictError, MemoryStateError, ProjectArchivedError,
-  RateLimitError, RunStateError, SensitiveConfirmationError,
-  type CreateRunOptions, type OwnerScopedRepository, type Store
+  RateLimitError, RunStateError, SensitiveConfirmationError, SpendLimitError,
+  type CreateRunOptions, type OwnerScopedRepository, type SpendLimits, type Store, type UsageKind
 } from "./repository";
 
 /**
@@ -31,6 +31,8 @@ export class MemoryStore implements Store {
   readonly memories = new Map<string, Owned<Memory> & { projectId: string }>();
   readonly decisions = new Map<string, Owned<Decision> & { projectId: string }>();
   readonly remembered = new Map<string, RememberedContext[]>();
+  /** Mirrors echiche.usage_ledger: no project ID, survives project deletion. */
+  readonly ledger: { ownerId: string; kind: string; reservedUsd: number; at: number }[] = [];
 
   forOwner(ownerId: string): OwnerScopedRepository {
     assertOwnerId(ownerId);
@@ -73,9 +75,26 @@ class MemoryOwnerRepository implements OwnerScopedRepository {
     const r = this.store.runs.get(id);
     return r && r.ownerId === this.ownerId ? r : undefined;
   }
-  private recentCount(items: Iterable<{ ownerId: string; createdAt: string }>): number {
+  private hourly(kind: string, maxPerHour: number, resource: RateLimitError["resource"]): void {
     const since = Date.now() - HOUR_MS;
-    return [...items].filter(i => i.ownerId === this.ownerId && Date.parse(i.createdAt) > since).length;
+    const n = this.store.ledger.filter(e => e.ownerId === this.ownerId && e.kind === kind && e.at > since).length;
+    if (n >= maxPerHour) throw new RateLimitError(resource, 3600);
+  }
+  private reserve(amount: number, limits: SpendLimits): void {
+    if (amount <= 0) return;
+    const since = Date.now() - 24 * HOUR_MS;
+    const recent = this.store.ledger.filter(e => e.at > since);
+    const own = recent.filter(e => e.ownerId === this.ownerId).reduce((sum, e) => sum + e.reservedUsd, 0);
+    if (own + amount > limits.userDailyUsd + 1e-9) throw new SpendLimitError("user");
+    const all = recent.reduce((sum, e) => sum + e.reservedUsd, 0);
+    if (all + amount > limits.globalDailyUsd + 1e-9) throw new SpendLimitError("global");
+  }
+  private record(kind: string, reservedUsd = 0): void {
+    this.store.ledger.push({ ownerId: this.ownerId, kind, reservedUsd, at: Date.now() });
+  }
+  async recordUsage(kind: UsageKind, maxPerHour: number): Promise<void> {
+    this.hourly(kind, maxPerHour, kind === "export" ? "exports" : "journal changes");
+    this.record(kind);
   }
   private save(run: StoredRun, patch: Partial<ThoughtRun>): ThoughtRun {
     const now = new Date().toISOString();
@@ -86,7 +105,8 @@ class MemoryOwnerRepository implements OwnerScopedRepository {
   }
 
   async createProject(input: CreateProjectInput, maxPerHour: number): Promise<Project> {
-    if (this.recentCount(this.store.projects.values()) >= maxPerHour) throw new RateLimitError("projects", 3600);
+    this.hourly("project", maxPerHour, "projects");
+    this.record("project");
     const now = new Date().toISOString();
     const project: Owned<Project> = { id: randomUUID(), ...input, archivedAt: null, createdAt: now, updatedAt: now, ownerId: this.ownerId };
     this.store.projects.set(project.id, project);
@@ -131,16 +151,19 @@ class MemoryOwnerRepository implements OwnerScopedRepository {
       }
     }
     if (project.archivedAt) throw new ProjectArchivedError(projectId);
-    if (this.recentCount(this.store.runs.values()) >= options.maxPerHour) throw new RateLimitError("runs", 3600);
+    this.hourly("run", options.maxPerHour, "runs");
     const now = new Date().toISOString();
     const remembered = [...this.store.memories.values()].some(m => m.projectId === projectId && m.status === "active")
       || [...this.store.decisions.values()].some(d => d.projectId === projectId && d.status === "active");
     const depth = input.depth ?? "auto";
     const decision = classify({ prompt: input.prompt, depth, hasMemory: remembered });
+    const budget = tierBudget(decision.tier, options.budget);
+    this.reserve(budget.maxCostUsd, options.spend);
+    this.record("run", budget.maxCostUsd);
     const run: StoredRun = {
       id: randomUUID(), projectId, prompt: input.prompt, status: "queued", result: null, generation: DEMO_GENERATION, errorCode: null,
       route: { requestedDepth: depth, tier: decision.tier, reasons: decision.reasons, policyVersion: decision.policyVersion, escalation: null },
-      cancelRequested: false, attempt: 0, budget: tierBudget(decision.tier, options.budget),
+      cancelRequested: false, attempt: 0, budget,
       usage: { steps: 0, activeSeconds: 0, researchCalls: 0, costUsd: 0 }, completedStages: [],
       createdAt: now, startedAt: null, updatedAt: now, completedAt: null,
       ownerId: this.ownerId, idempotencyKey: options.idempotencyKey
@@ -352,11 +375,13 @@ class MemoryOwnerRepository implements OwnerScopedRepository {
       decisions: ((await this.listDecisions(projectId)) ?? []).reverse()
     };
   }
-  async resumeRun(runId: string, increment: RunBudget): Promise<ThoughtRun | null> {
+  async resumeRun(runId: string, increment: RunBudget, spend: SpendLimits): Promise<ThoughtRun | null> {
     const run = this.ownRun(runId);
     if (!run) return null;
     if (run.status === "queued" || (ACTIVE_STATUSES as readonly string[]).includes(run.status)) return strip(run);
     if (run.status !== "paused_for_budget") throw new RunStateError(runId, run.status);
+    this.reserve(increment.maxCostUsd, spend);
+    this.record("resume", increment.maxCostUsd);
     const b = run.budget;
     return this.save(run, {
       status: "queued", errorCode: null,

@@ -1,6 +1,7 @@
+import { randomBytes } from "node:crypto";
 import { NextResponse } from "next/server";
 import { signInSchema } from "@/lib/domain/validation";
-import { createSupabaseForRequest } from "@/lib/server/auth";
+import { createSupabaseForRequest, SIGN_IN_COOKIE, signInCookieOptions } from "@/lib/server/auth";
 import { getServerConfig } from "@/lib/server/config";
 import { checkOrigin, handleUnexpected, readTextCapped } from "@/lib/server/http";
 import { log } from "@/lib/server/log";
@@ -11,6 +12,17 @@ export const dynamic = "force-dynamic";
 const ROUTE = "POST /auth/sign-in";
 
 const toLogin = (origin: string, query: string) => NextResponse.redirect(`${origin}/login?${query}`, 303);
+
+/**
+ * "Check your email", plus a short-lived marker cookie that ties the magic link to THIS browser.
+ * The callback refuses links without it, so nobody can sign a victim into the attacker's account
+ * by sending them a link (login CSRF; M8 finding F2).
+ */
+function linkSent(origin: string) {
+  const response = toLogin(origin, "sent=1");
+  response.cookies.set(SIGN_IN_COOKIE, randomBytes(32).toString("base64url"), signInCookieOptions(getServerConfig()));
+  return response;
+}
 
 /**
  * Magic-link sign-in from the /login form (application/x-www-form-urlencoded).
@@ -44,10 +56,10 @@ export async function POST(request: Request) {
       if (error.status === 429) return toLogin(origin, "error=rate_limited");
       // Includes "signups not allowed" for unknown addresses when sign-up is disabled: do not reveal it.
       log("warn", "sign_in_otp_rejected", { route: ROUTE, errorName: error.name, status: error.status ?? null });
-      if (error.status && error.status < 500) return toLogin(origin, "sent=1");
+      if (error.status && error.status < 500) return linkSent(origin);
       return toLogin(origin, "error=unavailable");
     }
-    return toLogin(origin, "sent=1");
+    return linkSent(origin);
   } catch (error) {
     log("error", "sign_in_failed", { route: ROUTE, errorName: error instanceof Error ? error.name : "unknown" });
     return toLogin(origin, "error=unavailable");

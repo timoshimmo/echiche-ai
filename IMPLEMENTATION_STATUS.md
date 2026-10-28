@@ -1,6 +1,6 @@
 # Implementation and verification status
 
-_Last updated: 2026-10-28 (M7, "Evaluation and adaptive compute")_
+_Last updated: 2026-10-28 (M8, "Security, privacy and failure-mode review")_
 
 "Verified" means the check was actually run, with the stated result, in the environment noted. Code presence alone is not verification.
 
@@ -11,16 +11,34 @@ From a **clean clone** against a **fresh database**:
 | Check | Result |
 |---|---|
 | `npm ci` · typecheck · lint | ✅ · 0 errors · 0 problems |
-| `npm test` (web unit: routes incl. owner-scoped evidence, the memory/decision journal and routing; config incl. refusing `OPENAI_API_KEY`; contracts; the router incl. labelled cases and benchmark drift) | ✅ 85 tests |
+| `npm test` (web unit: routes incl. owner-scoped evidence, the memory/decision journal and routing; config incl. refusing `OPENAI_API_KEY`; contracts; the router incl. labelled cases and benchmark drift; **M8:** an access matrix over every route handler, auth routes, security headers, abuse limits over HTTP) | ✅ 104 tests |
 | `npm run build` (no env); client-bundle scan; `npm audit --omit=dev` | ✅ · none found · 0 vulnerabilities |
-| `npm run test:db:prepare` from empty (0001–0008 via Supabase CLI), then re-run | ✅ · ✅ no-op |
-| `npm run test:integration`: repository + RLS as `echiche_web`, plus **three cross-language E2Es**: the demo worker CLI; the model pipeline with a scripted model; research over a local TLS site, where every brief citation resolves to a stored source and a verified quote, read by TS through RLS; memory continuity across runs; the quick route in the real worker CLI. Plus journal tests on real Postgres. | ✅ 41 tests |
+| `npm run test:db:prepare` from empty (0001–0009 via Supabase CLI), then re-run | ✅ · ✅ no-op |
+| `npm run test:integration`: repository + RLS as `echiche_web`, plus **three cross-language E2Es**: the demo worker CLI; the model pipeline with a scripted model; research over a local TLS site, where every brief citation resolves to a stored source and a verified quote, read by TS through RLS; memory continuity across runs; the quick route in the real worker CLI. Plus journal tests on real Postgres and, since M8, abuse limits and spend ceilings, duplicate-write retries and catalog-level deletion consistency. | ✅ 54 tests |
 | Worker: `uv sync --locked`, ruff, ruff format, pyright strict (incl. tests), `contracts --check` | ✅ |
-| Worker unit tests (incl. prompt registry, model pipeline, OpenAI adapter, Brave adapter, fetcher guards over real TLS, research and verification pipeline with adversarial fixtures, memory selection, routing and escalation, **the fake evaluation benchmark and its gates**) | ✅ 164 tests |
+| Worker unit tests (incl. prompt registry, model pipeline, OpenAI adapter, Brave adapter, fetcher guards over real TLS, research and verification pipeline with adversarial fixtures, memory selection, routing and escalation, **the fake evaluation benchmark and its gates**, fence-tag variants) | ✅ 165 tests |
 | Worker integration (as `echiche_worker`, incl. the memory benchmark and routed runs) | ✅ 48 tests |
 | `uv run python -m evals.run` (33 cases × variants A/B/C/R, scripted model) | ✅ all 13 invariant gates pass |
-| Same web and worker integration suites on a **fresh cluster with a Supabase-like admin** (non-superuser, CREATEROLE, BYPASSRLS) | ✅ 41 + 48 |
+| Same web and worker integration suites on a **fresh cluster with a Supabase-like admin** (non-superuser, CREATEROLE, BYPASSRLS) | ✅ 54 + 48 |
+| `npm audit` (including dev) · `pip-audit` (worker production set) · `scripts/ci/scan-secrets.mjs` | ✅ 0 · none known · clean |
 | Upgrading an M3 database with 25 runs: only 0005 applied; M3 `stage-output.v1` checkpoints still load (integration test) | ✅ |
+
+**M8 checks** (full report: [docs/security/review-m8.md](docs/security/review-m8.md); self-review, not independent).
+- **Findings:**
+  - **F1 (High), fixed:** deleting projects reset hourly limits and erased spend records, and there was no aggregate spend bound. Reproduced: 10 runs with a limit of 2. Fixed with the usage ledger and per-user and global spend ceilings (ADR-011).
+  - **Medium, fixed:** F2 login CSRF via magic links, F3 missing security headers, F4 an audit trail without user IDs.
+  - **Low, fixed:** F5 fence-tag variants, F6 dev-dependency advisories (Vitest 3 → 4.1.12), F7 env-file ignore rules and a CI secret scan, F8 test-coverage gaps.
+  - **Open or residual:** F9 duplicate memory or outcome posts on client retry, F10 Google Fonts privacy, F11 the CSP's `'unsafe-inline'`, F12 hosted Auth limits unverified, F13 model-obeyed injection.
+- **Production smoke over HTTP** (`next start`, Auth stand-in): delete-and-recreate refused, both spend ceilings answer `429 SPEND_LIMIT_REACHED`, project and export limits answer `429`, another user's project returns 404. Chromium loaded the login page and the signed-in workspace with zero CSP violations, and framing was blocked.
+- **Backup and restore drill (local):** `pg_dump -Fc` → `pg_restore`. RLS, policies, grants, function ACLs, rows and migration history are identical, and the full web (52) and worker (48) integration suites pass on the restored copy.
+- **Mutation checks** (all 12 caught):
+  - F1 ×5: counting deletable rows, the run reservation, the resume reservation, the global lock, the export limit;
+  - F2 ×2: the browser binding, unused OTP types;
+  - F3: framing;
+  - F4: probe audit;
+  - an authorization owner check removed from the store;
+  - F5: the old fence regex;
+  - a table added without a cascade.
 
 **M7 checks.** No live model or search call was made. Fake mode only; every number below comes from a scripted model and is **not a quality claim**.
 - **Router:**
@@ -143,6 +161,7 @@ What is enforced:
 - **A live OpenAI call.** The opt-in smoke test (`ECHICHE_LIVE_OPENAI=1 … pytest -m live`) is for the decision owner to run with their own key.
 - **A live, human-reviewed evaluation baseline** (procedure: [evaluation runbook](docs/runbooks/evaluation.md)). Real model quality, cost and latency are unmeasured, so no quality, cost or latency gates exist yet.
 - **Escalation with a real second model.** It is tested only with a scripted client.
+- **Hosted security settings (M8):** Supabase Auth rate limits and sign-up policy, a restore drill on Supabase backups, Render log retention, and whether Supabase's restore-to-new-project carries custom roles.
 - **Not verified in OpenAI's docs:** the context window and supported reasoning-effort values of `gpt-6.1-sol`. The official model page was unreachable.
 
 - **GitHub Actions jobs:** `supabase-stack` (real local Supabase), the worker Docker build/run, and the overall first CI run.
@@ -150,6 +169,22 @@ What is enforced:
 - **The magic-link email round trip** (manual, local stack).
 
 ## Implemented
+
+**M8** (ADR-011 **proposed**: confirm the ceiling defaults)
+- **Migration 0009:** `usage_ledger` (append-only, content-free, owner RLS) and `global_reserved_spend()` (security definer, returns one number).
+- **Web, abuse limits:** limits for projects, runs, exports and journal writes come from the ledger; runs and resumes reserve their spend against per-user and global ceilings (`429 SPEND_LIMIT_REACHED`).
+- **Web, auth and browser:**
+  - the magic-link callback requires the requesting browser's marker cookie, and only the OTP types Echiche uses are accepted;
+  - security headers (CSP, frame-ancestors / X-Frame-Options, HSTS in production, nosniff, Referrer-Policy, Permissions-Policy, COOP);
+  - Zod set to jitless so the CSP reports no violations.
+- **Web, audit:** `user_id` on run, journal, export and not-found events.
+- **Worker:** the data-fence escape covers spacing variants. Version 0.8.0.
+- **Tests and CI:**
+  - an access matrix over every handler (fails on an unclassified new route);
+  - auth-route tests; abuse-limit tests (HTTP and Postgres);
+  - duplicate-write retries; catalog-level deletion consistency;
+  - a repository secret scan in CI; `.gitignore` covers every `.env*` except the example; Vitest 4.1.12.
+- **Docs:** the security review, ADR-011, run-operations (ledger queries, the audit trail, the backup and restore drill), data lifecycle, README, `.env.example`, `render.yaml`.
 
 **M7** (ADR-010 **proposed**, awaiting the owner's review)
 - **Migration 0008:** route columns on `thought_runs` (requested depth, tier, reasons, policy version, escalation outcome), with column grants.
@@ -241,7 +276,8 @@ What is enforced:
 | No live evaluation baseline yet; quality, cost and latency gates unset | before pilot (needs approval and a spend cap) |
 | Privacy notice must mention OpenAI (data sent, retention) | before real users |
 | A clarifying question from framing is shown as a limitation in the brief; there is no answer-and-continue round-trip yet | later |
-| No alerting on worker heartbeats or stale runs (visibility only); no Playwright E2E | M8 |
+| No alerting on worker heartbeats or stale runs (visibility only); no Playwright E2E in CI | M9 readiness |
+| Hosted Supabase Auth rate limits and sign-up policy unverified; spend-ceiling values to confirm; Google Fonts loads from Google (self-host); no independent security review yet | before pilot / open sign-up ([review](docs/security/review-m8.md)) |
 | The UI polls (1.5 s) rather than streaming. Time spent in a timed-out stage isn't added to `active_seconds_used`. | — |
 | Custom SMTP, sign-up policy, hosted Auth settings | before pilot |
 

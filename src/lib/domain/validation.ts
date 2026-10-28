@@ -1,3 +1,4 @@
+import "./zod-setup";
 import { z } from "zod";
 
 const title = z.string().trim().min(2).max(120);

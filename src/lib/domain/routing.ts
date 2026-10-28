@@ -1,3 +1,4 @@
+import "./zod-setup";
 import { z } from "zod";
 import rawPolicy from "../../../config/routing-policy.json";
 

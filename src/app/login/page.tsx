@@ -4,6 +4,7 @@ const MESSAGES: Record<string, string> = {
   invalid_email: "Enter a valid email address.",
   rate_limited: "Too many sign-in emails were requested. Wait a few minutes and try again.",
   link_invalid: "That sign-in link is invalid or has expired. Request a new one.",
+  link_other_browser: "Open the sign-in link in the same browser where you requested it, or request a new link here.",
   unavailable: "Sign-in is temporarily unavailable. Try again shortly."
 };
 

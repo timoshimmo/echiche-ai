@@ -29,7 +29,7 @@ afterAll(async () => {
 async function setup() {
   const repo = store.forOwner(alice);
   const project = await repo.createProject({ title: "Pilot plan", problemStatement: "Should we run a paid pilot?" }, 100);
-  const { run } = (await repo.createRun(project.id, { prompt: "Should we run a paid pilot this quarter?" }, { maxPerHour: 100, budget: BUDGET }))!;
+  const { run } = (await repo.createRun(project.id, { prompt: "Should we run a paid pilot this quarter?" }, { maxPerHour: 100, budget: BUDGET, spend: { userDailyUsd: 1000, globalDailyUsd: 10000 } }))!;
   return { repo, project, run };
 }
 
@@ -134,5 +134,27 @@ describe("memory journal on real Postgres (RLS + triggers)", () => {
              (select count(*) from echiche.memories where owner_user_id = ${alice})::int as memories,
              (select count(*) from echiche.decisions where owner_user_id = ${alice})::int as decisions`;
     expect(counts).toEqual({ projects: 0, runs: 0, sources: 0, memories: 0, decisions: 0 });
+  });
+});
+
+describe("retries never duplicate journal writes (M8)", () => {
+  it("concurrent accepts of one brief record exactly one decision version", async () => {
+    const { repo, project, run } = await setup();
+    await finishWithProposals(run.id, project.id);
+    const results = await Promise.allSettled(Array.from({ length: 5 }, () => repo.acceptRun(run.id)));
+    expect(results.every(r => r.status === "fulfilled" && r.value?.status === "completed")).toBe(true);
+    const [{ n }] = await admin<{ n: number }[]>`select count(*)::int as n from echiche.decisions where project_id = ${project.id}`;
+    expect(n).toBe(1);
+  });
+
+  it("a worker retry cannot add the same proposal twice (unique run + proposal index)", async () => {
+    const { project, run } = await setup();
+    await finishWithProposals(run.id, project.id);
+    // What RunStore._insert_proposals does on a retried finish.
+    await admin`insert into echiche.memories (owner_user_id, project_id, kind, content, status, origin, sensitivity, source_run_id, proposal_index)
+                values (${alice}, ${project.id}, 'assumption', 'Clinics will pay 80 dollars per month.', 'proposed', 'model_proposal', 'normal', ${run.id}, 0)
+                on conflict (source_run_id, proposal_index) do nothing`;
+    const [{ n }] = await admin<{ n: number }[]>`select count(*)::int as n from echiche.memories where source_run_id = ${run.id}`;
+    expect(n).toBe(2);
   });
 });

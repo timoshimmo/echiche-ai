@@ -27,6 +27,12 @@ services:
         sync: false
       - key: APP_ORIGIN            # e.g. https://echiche-web.onrender.com or your domain
         sync: false
+      # Spend ceilings (M8, F1): each run's cap and each resume are reserved in full, per user and
+      # for everyone, over a rolling 24 hours. Set them to what you are willing to pay per day.
+      - key: USER_DAILY_SPEND_LIMIT_USD
+        value: "5"
+      - key: GLOBAL_DAILY_SPEND_LIMIT_USD
+        value: "50"
 
   - type: worker
     name: echiche-worker

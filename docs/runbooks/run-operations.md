@@ -109,3 +109,48 @@ select route_tier, route_policy_version, route_reasons, route_escalation from ec
 ```
 A changed `config/routing-policy.json` reaches both services on deploy: the web app classifies new runs with it, and the worker shapes them with it. Deploy web and worker together, so a tier never means different things to the two services.
 
+## Abuse limits and spend ceilings (M8)
+The web app reserves each run's spend cap (and each resume's increment) in `echiche.usage_ledger` and refuses new work over `USER_DAILY_SPEND_LIMIT_USD` or `GLOBAL_DAILY_SPEND_LIMIT_USD` (rolling 24 hours) with `429 SPEND_LIMIT_REACHED`. Hourly limits on projects, runs, exports and journal changes count the same ledger, which deleting a project does not erase.
+```sql
+-- Reserved spend in the last 24 hours: total, and the heaviest users (pseudonymous IDs).
+select round(sum(reserved_cost_usd), 2) as reserved_usd from echiche.usage_ledger where created_at > now() - interval '24 hours';
+select owner_user_id, round(sum(reserved_cost_usd), 2) as reserved_usd, count(*) filter (where kind = 'run') as runs
+  from echiche.usage_ledger where created_at > now() - interval '24 hours'
+ group by 1 order by 2 desc limit 10;
+
+-- Reserved vs actually spent (runs still present; deleted projects' runs no longer appear here).
+select round(sum(budget_max_cost_usd), 2) as reserved_still_present, round(sum(cost_usd_used), 2) as spent
+  from echiche.thought_runs where created_at > now() - interval '24 hours';
+
+-- Housekeeping (operator, monthly): the ledger only needs the last day; keep 30 days for abuse review.
+delete from echiche.usage_ledger where created_at < now() - interval '30 days';
+```
+
+## Audit trail (M8)
+Structured web logs carry `user_id` (a pseudonymous UUID, never an email) on these events:
+- `run_queued` and `run_cancel` / `run_accept` / `run_resume`;
+- `journal_change` (memory and decision changes, project deletion) and `project_exported`;
+- `resource_not_found`: a signed-in user asked for an ID they don't own or that doesn't exist. A burst from one `user_id` across many IDs is probing;
+- `origin_rejected`, `rate_limited` and `spend_limited`.
+
+Filter the Render log stream on these event names; no request bodies or content are logged.
+
+## Backup and restore drill (M8)
+Run it before the pilot and then quarterly. **Never restore over the live project.**
+1. In Supabase, restore the latest daily backup (or a PITR point) into a **new, temporary** project.
+2. Check the custom roles came across: `select rolname from pg_roles where rolname like 'echiche%';` should list `echiche_end_user`, `echiche_web` and `echiche_worker`. (Whether Supabase's restore-to-new-project carries custom roles is **unverified here**: a plain `pg_dump` does not include roles.) Then:
+   - **If they are missing**, the restored grants and policies refer to roles that don't exist and will have been dropped by the restore. Stop, and recreate the temporary project from the migrations plus a data-only restore instead.
+   - **If they are present**, set new login passwords for the temporary project as `postgres`: `alter role echiche_web with login password '<new>'; alter role echiche_worker with login password '<new>';`.
+3. Read-only checks (expected results come from the live project):
+```sql
+select count(*) filter (where relrowsecurity and relforcerowsecurity) as forced, count(*) as tables
+  from pg_class where relnamespace = 'echiche'::regnamespace and relkind = 'r';                        -- all forced
+select count(*) from pg_policies where schemaname = 'echiche';                                         -- same as live
+select string_agg(version, ' ' order by version) from supabase_migrations.schema_migrations;          -- same as live
+select (select count(*) from echiche.projects), (select count(*) from echiche.thought_runs);            -- plausible
+```
+4. Point a local web app at the temporary project as `echiche_web` and sign in with a test account. Its own projects are visible, and nothing else is.
+5. Delete the temporary project and record the date and the results in the operations log.
+
+Locally, the same drill (`pg_dump -Fc` → `pg_restore` → the integration suites) was run in M8 ([review](../security/review-m8.md)).
+

@@ -1,6 +1,6 @@
 [project]
 name = "echiche-worker"
-version = "0.7.0"
+version = "0.8.0"
 description = "Echiche AI orchestration worker (ADR-001, ADR-006): claims runs from Postgres and executes them durably."
 readme = "README.md"
 requires-python = ">=3.12,<3.13"

@@ -14,6 +14,7 @@ import {
 } from "@/lib/domain/types";
 import {
   ACTIVE_STATUSES, assertOwnerId, DataIntegrityError, IdempotencyConflictError, ProjectArchivedError, RateLimitError,
+  SpendLimitError, type SpendLimits, type UsageKind,
   RunStateError, type CreateRunOptions, type OwnerScopedRepository, type Store
 } from "./repository";
 
@@ -128,6 +129,9 @@ function asEvent(row: EventRow): RunEvent {
  * SET LOCAL ROLE echiche_end_user, so RLS policies apply (database layer), in addition
  * to the explicit owner_user_id filter in every query (application layer).
  */
+type LedgerKind = "project" | "run" | UsageKind;
+const LEDGER_RESOURCE = { project: "projects", run: "runs", export: "exports", journal_write: "journal changes" } as const;
+
 export class PostgresStore implements Store {
   private readonly sql: Sql;
   constructor(databaseUrl: string) {
@@ -154,18 +158,49 @@ class PostgresOwnerRepository implements OwnerScopedRepository {
     })) as T;
   }
 
-  /** Serialises create-per-owner in this transaction so concurrent requests cannot exceed the limit. */
-  private async enforceHourlyLimit(tx: Tx, resource: "projects" | "runs", maxPerHour: number): Promise<void> {
-    await tx`select pg_advisory_xact_lock(hashtextextended(${`echiche:rate:${resource}:${this.ownerId}`}, 0))`;
-    const [row] = resource === "projects"
-      ? await tx<{ n: number }[]>`select count(*)::int as n from echiche.projects where owner_user_id = ${this.ownerId} and created_at > now() - interval '1 hour'`
-      : await tx<{ n: number }[]>`select count(*)::int as n from echiche.thought_runs where owner_user_id = ${this.ownerId} and created_at > now() - interval '1 hour'`;
-    if (row.n >= maxPerHour) throw new RateLimitError(resource, 3600);
+  /**
+   * Hourly limit from the usage ledger (migration 0009), which deleting a project does not erase.
+   * Serialised per owner and kind with an advisory lock, so concurrent requests cannot exceed it.
+   * The caller appends the ledger row in the same transaction (`ledger`).
+   */
+  private async enforceHourlyLimit(tx: Tx, kind: LedgerKind, maxPerHour: number): Promise<void> {
+    await tx`select pg_advisory_xact_lock(hashtextextended(${`echiche:rate:${kind}:${this.ownerId}`}, 0))`;
+    const [row] = await tx<{ n: number }[]>`
+      select count(*)::int as n from echiche.usage_ledger
+       where owner_user_id = ${this.ownerId} and kind = ${kind} and created_at > now() - interval '1 hour'`;
+    if (row.n >= maxPerHour) throw new RateLimitError(LEDGER_RESOURCE[kind], 3600);
+  }
+
+  /** Reserves `amount` of spend against the per-user and global rolling-24-hour ceilings. */
+  private async reserveSpend(tx: Tx, amount: number, limits: SpendLimits): Promise<void> {
+    if (amount <= 0) return;
+    await tx`select pg_advisory_xact_lock(hashtextextended(${`echiche:spend:${this.ownerId}`}, 0))`;
+    const [own] = await tx<{ total: string }[]>`
+      select coalesce(sum(reserved_cost_usd), 0)::text as total from echiche.usage_ledger
+       where owner_user_id = ${this.ownerId} and created_at > now() - interval '24 hours'`;
+    if (Number(own.total) + amount > limits.userDailyUsd + 1e-9) throw new SpendLimitError("user");
+    // One lock for everyone: brief, and only around this check, so the global ceiling is exact.
+    await tx`select pg_advisory_xact_lock(hashtextextended('echiche:spend:global', 0))`;
+    const [all] = await tx<{ total: string }[]>`select echiche.global_reserved_spend(interval '24 hours')::text as total`;
+    if (Number(all.total) + amount > limits.globalDailyUsd + 1e-9) throw new SpendLimitError("global");
+  }
+
+  private async ledger(tx: Tx, kind: LedgerKind | "resume", reservedUsd = 0): Promise<void> {
+    await tx`insert into echiche.usage_ledger (owner_user_id, kind, reserved_cost_usd)
+             values (${this.ownerId}, ${kind}, ${reservedUsd})`;
+  }
+
+  async recordUsage(kind: UsageKind, maxPerHour: number): Promise<void> {
+    await this.tx(async tx => {
+      await this.enforceHourlyLimit(tx, kind, maxPerHour);
+      await this.ledger(tx, kind);
+    });
   }
 
   async createProject(input: CreateProjectInput, maxPerHour: number): Promise<Project> {
     return this.tx(async tx => {
-      await this.enforceHourlyLimit(tx, "projects", maxPerHour);
+      await this.enforceHourlyLimit(tx, "project", maxPerHour);
+      await this.ledger(tx, "project");
       const [row] = await tx<ProjectRow[]>`
         insert into echiche.projects (owner_user_id, title, problem_statement)
         values (${this.ownerId}, ${input.title}, ${input.problemStatement})
@@ -226,7 +261,7 @@ class PostgresOwnerRepository implements OwnerScopedRepository {
       if (!project) return null;
       if (project.archived_at) throw new ProjectArchivedError(projectId);
       // Takes the per-owner advisory lock, which also serialises same-key retries.
-      await this.enforceHourlyLimit(tx, "runs", options.maxPerHour);
+      await this.enforceHourlyLimit(tx, "run", options.maxPerHour);
       if (options.idempotencyKey) {
         const raced = await this.findByIdempotencyKey(tx, options.idempotencyKey);
         if (raced) {
@@ -243,6 +278,8 @@ class PostgresOwnerRepository implements OwnerScopedRepository {
       const depth = input.depth ?? "auto";
       const route = classify({ prompt: input.prompt, depth, hasMemory: remembered });
       const b = tierBudget(route.tier, options.budget);
+      await this.reserveSpend(tx, b.maxCostUsd, options.spend);
+      await this.ledger(tx, "run", b.maxCostUsd);
       const [inserted] = await tx<{ id: string }[]>`
         insert into echiche.thought_runs
           (owner_user_id, project_id, prompt, idempotency_key,
@@ -399,12 +436,14 @@ class PostgresOwnerRepository implements OwnerScopedRepository {
     });
   }
 
-  async resumeRun(runId: string, increment: RunBudget): Promise<ThoughtRun | null> {
+  async resumeRun(runId: string, increment: RunBudget, spend: SpendLimits): Promise<ThoughtRun | null> {
     return this.tx(async tx => {
       const run = await this.selectRun(tx, runId, true);
       if (!run) return null;
       if (run.status === "queued" || (ACTIVE_STATUSES as readonly string[]).includes(run.status)) return run;
       if (run.status !== "paused_for_budget") throw new RunStateError(runId, run.status);
+      await this.reserveSpend(tx, increment.maxCostUsd, spend);
+      await this.ledger(tx, "resume", increment.maxCostUsd);
       await tx`
         update echiche.thought_runs
            set status = 'queued',

@@ -5,7 +5,7 @@ import { ConfigError, getServerConfig } from "./config";
 import { log } from "./log";
 import {
   DecisionStateError, IdempotencyConflictError, MemoryStateError, ProjectArchivedError, RateLimitError, RunStateError,
-  SensitiveConfirmationError
+  SensitiveConfirmationError, SpendLimitError
 } from "./repository";
 
 /** Stable, client-facing error codes (blueprint §6.2). Messages are fixed strings, never raw exception text. */
@@ -23,6 +23,7 @@ export type ApiErrorCode =
   | "PAYLOAD_TOO_LARGE"
   | "UNSUPPORTED_MEDIA_TYPE"
   | "RATE_LIMITED"
+  | "SPEND_LIMIT_REACHED"
   | "RUN_FAILED"
   | "CONFIG_INVALID"
   | "AUTH_UNAVAILABLE"
@@ -39,8 +40,15 @@ export function ok(data: unknown, status = 200, headers: Record<string, string> 
   return NextResponse.json({ data }, { status, headers: { ...NO_STORE, ...headers } });
 }
 
-/** Another owner's resource and a nonexistent one get the same answer. */
-export const notFound = (what: "Project" | "Run" | "Memory" | "Decision") => apiError("NOT_FOUND", `${what} not found.`, 404);
+/**
+ * Another owner's resource and a nonexistent one get the same answer. With `audit`, the miss is
+ * logged with the caller's (pseudonymous) user ID, so repeated probing of IDs is visible to the
+ * operator (blueprint §8.1: audit permission denials; M8 F4). Never logs the requested ID's owner.
+ */
+export function notFound(what: "Project" | "Run" | "Memory" | "Decision", audit?: { route: string; userId: string }) {
+  if (audit) log("warn", "resource_not_found", { route: audit.route, user_id: audit.userId, resource: what });
+  return apiError("NOT_FOUND", `${what} not found.`, 404);
+}
 
 const CONNECTION_ERROR_CODES = new Set(["ECONNREFUSED", "ECONNRESET", "ETIMEDOUT", "ENOTFOUND", "EAI_AGAIN", "CONNECT_TIMEOUT", "CONNECTION_CLOSED", "CONNECTION_ENDED", "CONNECTION_DESTROYED"]);
 
@@ -68,6 +76,16 @@ export function handleUnexpected(error: unknown, route: string): NextResponse {
   if (error instanceof RateLimitError) {
     log("warn", "rate_limited", { route, resource: error.resource });
     return apiError("RATE_LIMITED", `Too many new ${error.resource} in the last hour. Try again later.`, 429, { "retry-after": String(error.retryAfterSeconds) });
+  }
+  if (error instanceof SpendLimitError) {
+    log("warn", "spend_limited", { route, scope: error.scope });
+    return apiError(
+      "SPEND_LIMIT_REACHED",
+      error.scope === "user"
+        ? "You've reached today's spending limit for runs. Try again later."
+        : "Echiche has reached today's overall spending limit. Try again later.",
+      429, { "retry-after": "3600" }
+    );
   }
   if (error instanceof RunStateError) {
     return apiError("RUN_STATE_CONFLICT", "That action isn't available for this run in its current state.", 409);
