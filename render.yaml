@@ -18,7 +18,8 @@ services:
     buildCommand: npm ci && npm run build
     startCommand: npm start
     healthCheckPath: /api/ready
-    maxShutdownDelaySeconds: 30
+    # No maxShutdownDelaySeconds here: Render rejects it on free services (its default is 30 s anyway).
+    # Add `maxShutdownDelaySeconds: 30` back when moving the web service to a paid plan.
     envVars:
       - key: NODE_VERSION
         value: "22"
