@@ -15,6 +15,7 @@ from typing import Literal, Protocol
 
 from echiche_worker.contracts import Stage, StageOutput, StageOutputV2
 from echiche_worker.memory import ContextItem, DecisionItem, MemoryItem
+from echiche_worker.routing import FULL, RouteSettings
 
 
 class ProviderError(Exception):
@@ -139,6 +140,8 @@ class StageContext:
     project_memories: list[MemoryItem] = field(default_factory=list[MemoryItem])
     project_decision: DecisionItem | None = None
     run_memory: list[ContextItem] = field(default_factory=list[ContextItem])
+    # Adaptive compute (M7): what the router's tier allows this run to do.
+    route: RouteSettings = FULL
 
     def spent_usd(self) -> Decimal:
         return sum((c.cost_usd for c in self.calls), Decimal("0")) + sum(
@@ -152,6 +155,7 @@ class StageResult:
     research_calls: int = 0
     cost_usd: Decimal = field(default_factory=lambda: Decimal("0"))
     memory_context: list[ContextItem] = field(default_factory=list[ContextItem])  # set by planning only
+    escalation: str | None = None  # set by synthesis when an escalation trigger fired (ADR-010)
 
 
 class ReasoningProvider(Protocol):

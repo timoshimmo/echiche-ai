@@ -28,6 +28,7 @@ from echiche_worker.factory import build_provider
 from echiche_worker.log import log
 from echiche_worker.model_provider import describe
 from echiche_worker.provider import ReasoningProvider
+from echiche_worker.routing import RoutingPolicy, RoutingPolicyError, load_policy
 from echiche_worker.store import RunStore, connect
 
 
@@ -63,8 +64,14 @@ def _lease_renewer(lease_store: RunStore, run_id: str) -> Callable[[], bool]:
     return lambda: lease_store.renew_lease(run_id)
 
 
-def run_loop(config: WorkerConfig, shutdown: Event, provider: ReasoningProvider, once: bool = False) -> int:
-    settings = ExecutorSettings(stage_timeout_seconds=config.stage_timeout_seconds)
+def run_loop(
+    config: WorkerConfig,
+    shutdown: Event,
+    provider: ReasoningProvider,
+    once: bool = False,
+    routing: RoutingPolicy | None = None,
+) -> int:
+    settings = ExecutorSettings(stage_timeout_seconds=config.stage_timeout_seconds, routing=routing)
     heartbeat_every = max(1.0, config.lease_seconds / 3)
     backoff = 1.0
     processed = 0
@@ -123,11 +130,22 @@ def main(argv: list[str] | None = None) -> int:
     try:
         config = parse_worker_config(os.environ)
         provider = build_provider(config)
+        routing = load_policy()
     except ConfigError as error:
         log("error", "config_invalid", issues=error.issues)
         return 2
+    except RoutingPolicyError as error:
+        log("error", "config_invalid", issues=[str(error)])
+        return 2
     if args.check_config:
-        log("info", "config_valid", version=__version__, worker_id=config.worker_id, provider=describe(provider))
+        log(
+            "info",
+            "config_valid",
+            version=__version__,
+            worker_id=config.worker_id,
+            provider=describe(provider),
+            routing=routing.version,
+        )
         return 0
 
     shutdown = Event()
@@ -138,8 +156,8 @@ def main(argv: list[str] | None = None) -> int:
 
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
-    log("info", "worker_starting", version=__version__, provider=describe(provider))
-    return run_loop(config, shutdown, provider, once=args.once)
+    log("info", "worker_starting", version=__version__, provider=describe(provider), routing=routing.version)
+    return run_loop(config, shutdown, provider, once=args.once, routing=routing)
 
 
 if __name__ == "__main__":

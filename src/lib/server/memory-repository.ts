@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { classify, tierBudget } from "@/lib/domain/routing";
 import type {
   CreateProjectInput, Project, RunBudget, RunEvent, RunEvidence, StartRunInput, ThoughtRun, UpdateProjectInput
 } from "@/lib/domain/types";
@@ -123,16 +124,23 @@ class MemoryOwnerRepository implements OwnerScopedRepository {
     if (options.idempotencyKey) {
       const existing = [...this.store.runs.values()].find(r => r.ownerId === this.ownerId && r.idempotencyKey === options.idempotencyKey);
       if (existing) {
-        if (existing.projectId !== projectId || existing.prompt !== input.prompt) throw new IdempotencyConflictError();
+        if (existing.projectId !== projectId || existing.prompt !== input.prompt || existing.route.requestedDepth !== (input.depth ?? "auto")) {
+          throw new IdempotencyConflictError();
+        }
         return { run: strip(existing), created: false };
       }
     }
     if (project.archivedAt) throw new ProjectArchivedError(projectId);
     if (this.recentCount(this.store.runs.values()) >= options.maxPerHour) throw new RateLimitError("runs", 3600);
     const now = new Date().toISOString();
+    const remembered = [...this.store.memories.values()].some(m => m.projectId === projectId && m.status === "active")
+      || [...this.store.decisions.values()].some(d => d.projectId === projectId && d.status === "active");
+    const depth = input.depth ?? "auto";
+    const decision = classify({ prompt: input.prompt, depth, hasMemory: remembered });
     const run: StoredRun = {
       id: randomUUID(), projectId, prompt: input.prompt, status: "queued", result: null, generation: DEMO_GENERATION, errorCode: null,
-      cancelRequested: false, attempt: 0, budget: { ...options.budget },
+      route: { requestedDepth: depth, tier: decision.tier, reasons: decision.reasons, policyVersion: decision.policyVersion, escalation: null },
+      cancelRequested: false, attempt: 0, budget: tierBudget(decision.tier, options.budget),
       usage: { steps: 0, activeSeconds: 0, researchCalls: 0, costUsd: 0 }, completedStages: [],
       createdAt: now, startedAt: null, updatedAt: now, completedAt: null,
       ownerId: this.ownerId, idempotencyKey: options.idempotencyKey

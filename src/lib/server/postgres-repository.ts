@@ -5,6 +5,7 @@ import type {
   RememberedContext, ReviseDecisionInput
 } from "@/lib/domain/memory";
 import { parseRunResult } from "@/lib/domain/reasoning";
+import { classify, tierBudget } from "@/lib/domain/routing";
 import * as journal from "./postgres-memory";
 import {
   RUN_EVENT_TYPES, RUN_STAGES, RUN_STATUSES,
@@ -27,7 +28,9 @@ type RunRow = {
   result_schema_version: string | null; error_code: string | null; cancel_requested_at: Date | null; attempt: number;
   budget_max_steps: number; budget_max_active_seconds: number; budget_max_research_calls: number; budget_max_cost_usd: string;
   steps_used: number; active_seconds_used: string; research_calls_used: number; cost_usd_used: string;
-  completed_stages: string[]; generation: GenerationRow; created_at: Date; started_at: Date | null; updated_at: Date; completed_at: Date | null;
+  completed_stages: string[]; generation: GenerationRow; created_at: Date;
+  requested_depth: "auto" | "quick" | "standard" | "deep"; route_tier: "low" | "medium" | "high" | null;
+  route_reasons: { signal: string; points: number; detail: string }[]; route_policy_version: string | null; route_escalation: string | null; started_at: Date | null; updated_at: Date; completed_at: Date | null;
 };
 type GenerationRow = {
   calls: number; repairs: number; input_tokens: number; output_tokens: number; cost_usd: string | number;
@@ -53,6 +56,7 @@ const RUN_COLUMNS = `r.id, r.project_id, r.prompt, r.status, r.result, r.result_
   r.cancel_requested_at, r.attempt, r.budget_max_steps, r.budget_max_active_seconds, r.budget_max_research_calls,
   r.budget_max_cost_usd, r.steps_used, r.active_seconds_used, r.research_calls_used, r.cost_usd_used,
   r.created_at, r.started_at, r.updated_at, r.completed_at,
+  r.requested_depth, r.route_tier, r.route_reasons, r.route_policy_version, r.route_escalation,
   coalesce((select array_agg(o.stage) from echiche.run_stage_outputs o
              where o.run_id = r.id and o.owner_user_id = r.owner_user_id), '{}') as completed_stages,
   (select json_build_object(
@@ -85,6 +89,8 @@ function asRun(row: RunRow): ThoughtRun {
   return {
     id: row.id, projectId: row.project_id, prompt: row.prompt, status, result, generation: asGeneration(row.generation),
     errorCode: row.error_code,
+    route: { requestedDepth: row.requested_depth, tier: row.route_tier, reasons: row.route_reasons, policyVersion: row.route_policy_version,
+      escalation: row.route_escalation },
     cancelRequested: row.cancel_requested_at !== null, attempt: row.attempt,
     budget: {
       maxSteps: row.budget_max_steps, maxActiveSeconds: row.budget_max_active_seconds,
@@ -209,7 +215,9 @@ class PostgresOwnerRepository implements OwnerScopedRepository {
       if (options.idempotencyKey) {
         const replay = await this.findByIdempotencyKey(tx, options.idempotencyKey);
         if (replay) {
-          if (replay.projectId !== projectId || replay.prompt !== input.prompt) throw new IdempotencyConflictError();
+          if (replay.projectId !== projectId || replay.prompt !== input.prompt || replay.route.requestedDepth !== (input.depth ?? "auto")) {
+            throw new IdempotencyConflictError();
+          }
           return { run: replay, created: false };
         }
       }
@@ -222,17 +230,27 @@ class PostgresOwnerRepository implements OwnerScopedRepository {
       if (options.idempotencyKey) {
         const raced = await this.findByIdempotencyKey(tx, options.idempotencyKey);
         if (raced) {
-          if (raced.projectId !== projectId || raced.prompt !== input.prompt) throw new IdempotencyConflictError();
+          if (raced.projectId !== projectId || raced.prompt !== input.prompt || raced.route.requestedDepth !== (input.depth ?? "auto")) {
+            throw new IdempotencyConflictError();
+          }
           return { run: raced, created: false };
         }
       }
-      const b = options.budget;
+      const [{ remembered }] = await tx<{ remembered: boolean }[]>`
+        select exists (select 1 from echiche.decisions where project_id = ${projectId} and owner_user_id = ${this.ownerId} and status = 'active')
+            or exists (select 1 from echiche.memories where project_id = ${projectId} and owner_user_id = ${this.ownerId} and status = 'active')
+           as remembered`;
+      const depth = input.depth ?? "auto";
+      const route = classify({ prompt: input.prompt, depth, hasMemory: remembered });
+      const b = tierBudget(route.tier, options.budget);
       const [inserted] = await tx<{ id: string }[]>`
         insert into echiche.thought_runs
           (owner_user_id, project_id, prompt, idempotency_key,
-           budget_max_steps, budget_max_active_seconds, budget_max_research_calls, budget_max_cost_usd)
+           budget_max_steps, budget_max_active_seconds, budget_max_research_calls, budget_max_cost_usd,
+           requested_depth, route_tier, route_reasons, route_policy_version)
         values (${this.ownerId}, ${projectId}, ${input.prompt}, ${options.idempotencyKey ?? null},
-                ${b.maxSteps}, ${b.maxActiveSeconds}, ${b.maxResearchCalls}, ${b.maxCostUsd})
+                ${b.maxSteps}, ${b.maxActiveSeconds}, ${b.maxResearchCalls}, ${b.maxCostUsd},
+                ${depth}, ${route.tier}, ${tx.json(route.reasons)}, ${route.policyVersion})
         returning id`;
       return { run: (await this.selectRun(tx, inserted.id))!, created: true };
     });

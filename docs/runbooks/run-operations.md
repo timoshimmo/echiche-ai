@@ -92,3 +92,20 @@ select date_trunc('week', created_at) as week, status, sensitivity, count(*) as 
 select count(*) filter (where version > 1) as corrected_versions, count(*) as all_rows from echiche.memories;
 ```
 Users delete their own data in the app (hard delete). Operators must not edit memory or decision rows by hand: the triggers allow it for `postgres`, but versions and provenance would then no longer match what the user saw.
+
+## Routing and escalation (M7, ADR-010)
+```sql
+-- Tier mix, spend and escalations over the last 7 days.
+select route_tier, requested_depth, count(*) as runs,
+       round(avg(cost_usd_used), 4) as avg_cost_usd,
+       count(*) filter (where route_escalation like 'synthesis escalated%') as escalated,
+       count(*) filter (where route_escalation like 'escalation triggered%') as justified_not_escalated
+  from echiche.thought_runs
+ where created_at > now() - interval '7 days'
+ group by 1, 2 order by 1, 2;
+
+-- Why a run got its tier (the reasons quote words from the user's prompt: treat as user content).
+select route_tier, route_policy_version, route_reasons, route_escalation from echiche.thought_runs where id = '<run id>';
+```
+A changed `config/routing-policy.json` reaches both services on deploy: the web app classifies new runs with it, and the worker shapes them with it. Deploy web and worker together, so a tier never means different things to the two services.
+

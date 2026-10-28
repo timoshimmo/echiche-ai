@@ -6,4 +6,5 @@
 !worker/README.md
 !worker/src
 !prompts/runtime
+!config/routing-policy.json
 **/__pycache__

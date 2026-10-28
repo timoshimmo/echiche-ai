@@ -45,7 +45,7 @@ export async function POST(request: Request, context: Context) {
   const body = await readJsonBody(request);
   if ("response" in body) return body.response;
   const parsed = startRunSchema.safeParse(body.value);
-  if (!parsed.success) return apiError("VALIDATION_ERROR", "Provide only a prompt of 10–8000 characters.", 400);
+  if (!parsed.success) return apiError("VALIDATION_ERROR", "Provide a prompt of 10–8000 characters and, optionally, depth (auto, quick, standard or deep).", 400);
 
   try {
     const config = getServerConfig();
@@ -56,7 +56,7 @@ export async function POST(request: Request, context: Context) {
     });
     if (!outcome) return notFound("Project");
     if (!outcome.created) return ok(outcome.run, 200, { "idempotent-replayed": "true" });
-    log("info", "run_queued", { route: ROUTE, run_id: outcome.run.id, project_id: id.data });
+    log("info", "run_queued", { route: ROUTE, run_id: outcome.run.id, project_id: id.data, tier: outcome.run.route.tier });
     return ok(outcome.run, 202, { location: `/api/runs/${outcome.run.id}` });
   } catch (error) {
     return handleUnexpected(error, ROUTE);

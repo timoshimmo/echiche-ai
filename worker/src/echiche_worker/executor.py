@@ -30,7 +30,7 @@ from threading import Event
 from pydantic import ValidationError
 
 from echiche_worker.compose import MissingStageError, compose_final
-from echiche_worker.contracts import STAGES, Stage
+from echiche_worker.contracts import STAGES, Stage, StageOutputV2
 from echiche_worker.log import log
 from echiche_worker.provider import (
     BudgetPreflightError,
@@ -42,6 +42,7 @@ from echiche_worker.provider import (
     call_with_timeout,
 )
 from echiche_worker.retry import RetryPolicy, run_with_retries
+from echiche_worker.routing import QUICK_ROUTE_LIMITATION, SKIPPED_STAGE_TEXT, RouteSettings, RoutingPolicy, route_for
 from echiche_worker.store import ClaimedRun, CorruptCheckpointError, LeaseLostError, RunStore, Usage, to_v2
 
 STAGE_TITLES: dict[Stage, str] = {
@@ -67,6 +68,7 @@ class ExecutorSettings:
     stage_timeout_seconds: float
     retry: RetryPolicy = field(default_factory=RetryPolicy)
     requeue_base_seconds: float = 5.0
+    routing: RoutingPolicy | None = None  # M7; None = every run gets the full pipeline
 
 
 def budget_exceeded(run: ClaimedRun, usage: Usage, stage: Stage | None = None) -> str | None:
@@ -174,7 +176,9 @@ def _execute(
         log("info", "run_resumed", completed_stages=list(outputs), **fields)
 
     usage = run.usage
-    memories, decision = store.load_project_memory(run) if "planning" not in outputs else ([], None)
+    route = route_for(settings.routing, run.route_tier)
+    load = "planning" not in outputs and route.memory
+    memories, decision = store.load_project_memory(run) if load else ([], None)
     run_memory = store.load_run_memory(run.id)
     for stage in STAGES:
         if stage in outputs:
@@ -187,6 +191,14 @@ def _execute(
             store.cancel(run)
             log("info", "run_cancelled", stage=stage, **fields)
             return Outcome.CANCELLED
+        skip = _skipped_output(route, stage, outputs)
+        if skip is not None:
+            # The tier leaves this stage out: checkpoint it as skipped (no provider call, no cost),
+            # so resume, composition and the run timeline all see an explicit record of it.
+            usage = store.commit_stage(run, skip, 0, 0, Decimal(0))
+            outputs[stage] = skip
+            log("info", "stage_skipped_by_route", stage=stage, tier=route.label, **fields)
+            continue
         exceeded = budget_exceeded(run, usage, stage)
         if exceeded:
             store.pause_for_budget(run, exceeded)
@@ -208,6 +220,7 @@ def _execute(
             project_memories=memories,
             project_decision=decision,
             run_memory=list(run_memory),
+            route=route,
         )
         started = time.monotonic()
         try:
@@ -259,6 +272,7 @@ def _execute(
             ctx.calls,
             ctx.research_calls,
             result.memory_context,
+            result.escalation,
         )
         outputs[stage] = to_v2(result.output)
         if result.memory_context:
@@ -274,6 +288,22 @@ def _execute(
     store.finish(run, schema_version, final)
     log("info", "run_awaiting_review", **fields)
     return Outcome.AWAITING_REVIEW
+
+
+_ROUTED: dict[Stage, str] = {"researching": "research", "critiquing": "critique", "verifying": "verify"}
+
+
+def _skipped_output(route: RouteSettings, stage: Stage, outputs: dict[Stage, StageOutputV2]) -> StageOutputV2 | None:
+    flag = _ROUTED.get(stage)
+    if flag is None or getattr(route, flag):
+        return None
+    first = not any(s in outputs and outputs[s].title.startswith("Skipped") for s in _ROUTED)
+    return StageOutputV2(
+        stage=stage,
+        title=f"Skipped ({route.label} route)",
+        content=SKIPPED_STAGE_TEXT[stage],
+        limitations=[QUICK_ROUTE_LIMITATION] if first else [],
+    )
 
 
 def _call(

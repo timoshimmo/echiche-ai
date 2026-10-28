@@ -1,6 +1,6 @@
 [project]
 name = "echiche-worker"
-version = "0.6.0"
+version = "0.7.0"
 description = "Echiche AI orchestration worker (ADR-001, ADR-006): claims runs from Postgres and executes them durably."
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
@@ -38,9 +38,10 @@ ignore = []
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "ANN"]
+"evals/**" = ["S101"]
 
 [tool.pyright]
-include = ["src", "tests"]
+include = ["src", "tests", "evals"]
 pythonVersion = "3.12"
 typeCheckingMode = "strict"
 

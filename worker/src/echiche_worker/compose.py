@@ -88,7 +88,7 @@ def _with_clarification(brief: DecisionBriefV1, planning: StageOutput | None) ->
 def _with_research_limits(brief: DecisionBriefV1, outputs: Mapping[Stage, StageOutput]) -> DecisionBriefV1:
     """Carries the research and verification stages' limitations into the brief verbatim
     (deterministic, application-written), so evidence gaps can never be dropped by the model."""
-    notes = [n for s in ("researching", "verifying") for n in getattr(outputs.get(s), "limitations", [])]
+    notes = [n for s in ("researching", "critiquing", "verifying") for n in getattr(outputs.get(s), "limitations", [])]
     merged = list(brief.limitations)
     for note in notes:
         text = note if len(note) <= 500 else note[:497] + "..."

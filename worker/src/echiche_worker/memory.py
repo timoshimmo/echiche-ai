@@ -85,7 +85,15 @@ def _scores(question: str, candidates: list[MemoryItem]) -> list[float]:
     for bag in bags:
         for word in bag:
             df[word] = df.get(word, 0) + 1
-    return [sum(math.log((n + 1) / (df[w] + 0.5)) for w in wanted & bag) for bag in bags]
+
+    # A word found in exactly one remembered item is distinctive by definition, so it is worth at
+    # least the threshold. Without this floor a project with one or two items could never recall
+    # them: every word is in "all" of its items (found by the M7 benchmark, case M05).
+    def weight(word: str) -> float:
+        idf = math.log((n + 1) / (df[word] + 0.5))
+        return max(idf, MIN_RELEVANCE) if df[word] == 1 else idf
+
+    return [sum(weight(w) for w in wanted & bag) for bag in bags]
 
 
 def select_context(

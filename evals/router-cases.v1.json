@@ -1,0 +1,30 @@
+{
+  "version": "router-cases.v1",
+  "description": "Hand-labelled routing cases (synthetic). Labels are the tier a reviewer would expect; disagreements are reported, not hidden.",
+  "cases": [
+    {"id": "R01", "prompt": "What did we decide about the pilot pricing?", "hasMemory": true, "expect": "low"},
+    {"id": "R02", "prompt": "Remind me of our current constraints for the launch.", "hasMemory": true, "expect": "low"},
+    {"id": "R03", "prompt": "Summarize what we know so far about clinic onboarding.", "hasMemory": true, "expect": "low"},
+    {"id": "R04", "prompt": "Rewrite our goal statement more clearly please.", "hasMemory": true, "expect": "low"},
+    {"id": "R05", "prompt": "Recap the open questions for this project.", "hasMemory": false, "expect": "low"},
+    {"id": "R06", "prompt": "Help me think through the next step for the newsletter.", "hasMemory": true, "expect": "low"},
+    {"id": "R07", "prompt": "Should the onboarding email go out on Monday or Tuesday?", "hasMemory": true, "expect": "low"},
+    {"id": "R08", "prompt": "Should we move the weekly sync to Thursdays?", "hasMemory": false, "expect": "medium"},
+    {"id": "R09", "prompt": "Compare two onboarding flows for small clinics.", "hasMemory": true, "expect": "medium"},
+    {"id": "R10", "prompt": "Which of our three feature ideas should we build first?", "hasMemory": false, "expect": "medium"},
+    {"id": "R11", "prompt": "Is a referral program or paid ads the better channel for us?", "hasMemory": true, "expect": "medium"},
+    {"id": "R12", "prompt": "What does the market data say about clinic software churn?", "hasMemory": true, "expect": "medium"},
+    {"id": "R13", "prompt": "Should we change our pricing from monthly to annual plans?", "hasMemory": true, "expect": "medium"},
+    {"id": "R14", "prompt": "Should we hire a second engineer this quarter?", "hasMemory": true, "expect": "medium"},
+    {"id": "R15", "prompt": "Should we raise a $500k pre-seed round now or wait six months?", "hasMemory": true, "expect": "high"},
+    {"id": "R16", "prompt": "Should we enter the Kenyan market next year given local competitors?", "hasMemory": false, "expect": "high"},
+    {"id": "R17", "prompt": "Should I sign a 3-year office lease for 40,000 USD a year?", "hasMemory": true, "expect": "high"},
+    {"id": "R18", "prompt": "Should we pivot from clinics to dental practices, given industry trends?", "hasMemory": true, "expect": "high"},
+    {"id": "R19", "prompt": "Do we accept the acquisition offer or keep building independently?", "hasMemory": true, "expect": "high"},
+    {"id": "R20", "prompt": "Should we shut down the hardware product line and lay off the team?", "hasMemory": false, "expect": "high"},
+    {"id": "R21", "prompt": "Is it worth partnering with a hospital group on an exclusive contract?", "hasMemory": true, "expect": "high"},
+    {"id": "R22", "prompt": "Should we expand to two new cities with a 1 million naira budget?", "hasMemory": false, "expect": "high"},
+    {"id": "R23", "prompt": "Write a friendly reminder for clinics about the pilot survey.", "hasMemory": true, "expect": "low"},
+    {"id": "R24", "prompt": "List our assumptions about clinic budgets.", "hasMemory": true, "expect": "low"}
+  ]
+}

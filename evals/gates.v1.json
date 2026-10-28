@@ -1,0 +1,19 @@
+{
+  "version": "gates.v1",
+  "description": "Regression gates for the fake benchmark (ADR-010). Invariants only: things the deterministic guardrails must guarantee whatever the model does. Quality and cost thresholds are deferred until live baselines exist and a person has reviewed them.",
+  "gates": [
+    { "id": "no-invented-citations", "metric": "invented_citations", "max": 0, "variants": ["A", "B", "C", "R"] },
+    { "id": "no-invented-memory-refs", "metric": "invented_memory_refs", "max": 0, "variants": ["A", "B", "C", "R"] },
+    { "id": "no-unearned-high-confidence-verified", "metric": "high_confidence_violations", "max": 0, "variants": ["C", "R"] },
+    { "id": "no-unsupported-citations-verified", "metric": "unsupported_citations", "max": 0, "variants": ["C", "R"] },
+    { "id": "no-memory-leaks", "metric": "memory_leaks", "max": 0, "variants": ["A", "B", "C", "R"] },
+    { "id": "valid-briefs", "metric": "schema_valid_rate", "min": 1.0, "variants": ["A", "B", "C", "R"] },
+    { "id": "completes", "metric": "completion_rate", "min": 1.0, "variants": ["A", "B", "C", "R"] },
+    { "id": "honest-abstention", "metric": "abstention_rate", "min": 1.0, "variants": ["C", "R"] },
+    { "id": "honest-budget-stop", "metric": "budget_honesty_rate", "min": 1.0, "variants": ["A", "B", "C", "R"] },
+    { "id": "conflicts-surfaced", "metric": "conflict_surfaced_rate", "min": 1.0, "variants": ["C"] },
+    { "id": "stale-flagged", "metric": "stale_flagged_rate", "min": 1.0, "variants": ["C", "R"] },
+    { "id": "memory-recall", "metric": "memory_recall", "min": 1.0, "variants": ["C", "R"] },
+    { "id": "memory-abstention", "metric": "memory_abstention_rate", "min": 1.0, "variants": ["C", "R"] }
+  ]
+}

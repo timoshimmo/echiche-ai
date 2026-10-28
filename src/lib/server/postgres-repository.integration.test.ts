@@ -1,7 +1,8 @@
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
-import type { RunBudget } from "@/lib/domain/types";
+import { tierBudget } from "@/lib/domain/routing";
+import type { RunBudget, StartRunInput } from "@/lib/domain/types";
 import { adminSql, createTestUser, resetData } from "@/test/db";
 import { closePostgresClients, PostgresStore } from "./postgres-repository";
 import { DataIntegrityError, IdempotencyConflictError, ProjectArchivedError, RateLimitError, RunStateError } from "./repository";
@@ -25,10 +26,11 @@ afterAll(async () => {
   await closePostgresClients();
 });
 
-async function aliceRun(options = OPTS) {
+async function aliceRun(options = OPTS, depth: StartRunInput["depth"] = "auto") {
   const repo = store.forOwner(alice);
   const project = await repo.createProject({ title: "Alice plan", problemStatement: "Alice's confidential decision." }, 100);
-  const outcome = (await repo.createRun(project.id, { prompt: "Alice's private question here." }, options))!;
+  // With depth "auto" this short prompt routes to the quick (low) tier (ADR-010).
+  const outcome = (await repo.createRun(project.id, { prompt: "Alice's private question here.", depth }, options))!;
   return { repo, project, run: outcome.run };
 }
 
@@ -38,12 +40,17 @@ async function workerSets(runId: string, status: string, extra: Record<string, u
 }
 
 describe("PostgresStore as echiche_web (owner-scoped, real Postgres)", () => {
-  it("queues a run with the configured budget and nothing executed", async () => {
+  it("queues a run with the router's tier, the tighter of the configured and tier budgets, and nothing executed", async () => {
     const { repo, project, run } = await aliceRun();
     expect(run).toMatchObject({
       projectId: project.id, status: "queued", result: null, attempt: 0, cancelRequested: false,
-      budget: BUDGET, usage: { steps: 0, activeSeconds: 0, researchCalls: 0, costUsd: 0 }, completedStages: []
+      budget: tierBudget("low", BUDGET), usage: { steps: 0, activeSeconds: 0, researchCalls: 0, costUsd: 0 }, completedStages: [],
+      route: { requestedDepth: "auto", tier: "low", policyVersion: "routing-policy.v1", escalation: null }
     });
+    expect(run.budget).toEqual({ maxSteps: 5, maxActiveSeconds: 180, maxResearchCalls: 0, maxCostUsd: 0.1 });
+    const deep = (await aliceRun(OPTS, "deep")).run;
+    expect(deep.route).toMatchObject({ requestedDepth: "deep", tier: "high" });
+    expect(deep.budget).toEqual({ maxSteps: 12, maxActiveSeconds: 600, maxResearchCalls: 6, maxCostUsd: 0.5 });
     expect(await repo.getRun(run.id)).toEqual(run);
     expect(await repo.listEvents(run.id)).toEqual([]);
   });
@@ -103,9 +110,10 @@ describe("PostgresStore as echiche_web (owner-scoped, real Postgres)", () => {
     await workerSets(run.id, "paused_for_budget", { error_code: "BUDGET_STEPS", steps_used: 18 });
     const inc: RunBudget = { maxSteps: 9, maxActiveSeconds: 300, maxResearchCalls: 4, maxCostUsd: 0.25 };
     const resumed = await repo.resumeRun(run.id, inc);
-    expect(resumed).toMatchObject({ status: "queued", errorCode: null, budget: { maxSteps: 27, maxActiveSeconds: 900, maxResearchCalls: 12, maxCostUsd: 0.75 } });
+    // the low tier's 5/180/0/0.10 plus the increase
+    expect(resumed).toMatchObject({ status: "queued", errorCode: null, budget: { maxSteps: 14, maxActiveSeconds: 480, maxResearchCalls: 4, maxCostUsd: 0.35 } });
     const again = await repo.resumeRun(run.id, inc); // idempotent: no double increase
-    expect(again?.budget.maxSteps).toBe(27);
+    expect(again?.budget.maxSteps).toBe(14);
     await workerSets(run.id, "failed");
     await expect(repo.resumeRun(run.id, inc)).rejects.toBeInstanceOf(RunStateError);
   });
@@ -167,7 +175,7 @@ describe("end to end across languages (ADR-001 D8): web queues → Python worker
 
   it("completes a queued run with the real worker and the shared result contract", async () => {
     expect(workerUrl, "WORKER_TEST_DATABASE_URL (echiche_worker) is required for the E2E test").toBeTruthy();
-    const { repo, run } = await aliceRun();
+    const { repo, run } = await aliceRun(OPTS, "standard");
 
     const worker = spawnSync("uv", ["run", "--no-sync", "--directory", workerDir, "echiche-worker", "--once"], {
       env: { ...process.env, DATABASE_URL: workerUrl, WORKER_ID: "worker-e2e" }, encoding: "utf8", timeout: 120_000
@@ -189,8 +197,23 @@ describe("end to end across languages (ADR-001 D8): web queues → Python worker
     expect((await repo.acceptRun(run.id))?.status).toBe("completed");
   });
 
+  it("runs the quick route in the real worker: the routed-out stages are recorded as skipped and disclosed", async () => {
+    const { repo, run } = await aliceRun(); // auto → low
+    const worker = spawnSync("uv", ["run", "--no-sync", "--directory", workerDir, "echiche-worker", "--once"], {
+      env: { ...process.env, DATABASE_URL: workerUrl, WORKER_ID: "worker-e2e" }, encoding: "utf8", timeout: 120_000
+    });
+    expect(worker.status, worker.stderr).toBe(0);
+    const done = await repo.getRun(run.id);
+    expect(done).toMatchObject({ status: "awaiting_user_review", route: { tier: "low" } });
+    expect(done?.completedStages).toEqual(["planning", "researching", "critiquing", "verifying", "synthesizing"]);
+    if (done?.result?.schemaVersion !== "reasoning-scaffold.v1") throw new Error("expected the demo scaffold");
+    expect(done.result.data.caveat).toMatch(/This was a quick run: it was not researched, critiqued or verified/);
+    expect(done.result.data.stages.find(s => s.stage === "challenge")?.title).toBe("Skipped (low route)");
+    expect(done.usage.steps).toBe(5);
+  });
+
   it("reads a model-generated decision brief and its call telemetry through RLS (scripted model, no network)", async () => {
-    const { repo, run } = await aliceRun();
+    const { repo, run } = await aliceRun(OPTS, "standard");
     const bobRepo = store.forOwner(bob);
     const worker = spawnSync("uv", ["run", "--no-sync", "--directory", workerDir, "python", "-m", "tests.e2e_fake_model"], {
       env: { ...process.env, DATABASE_URL: workerUrl }, encoding: "utf8", timeout: 120_000
@@ -204,7 +227,7 @@ describe("end to end across languages (ADR-001 D8): web queues → Python worker
     expect(done.result.data.citations).toEqual([]);
     expect(done.generation).toMatchObject({ mode: "model", providers: ["openai"], calls: 3, repairs: 0 });
     expect(done.generation.prompts.sort()).toEqual(
-      ["decision-brief-synthesis@2.2.0", "decision-critic@2.1.0", "decision-framing@2.1.0"]
+      ["decision-brief-synthesis@2.3.0", "decision-critic@2.1.0", "decision-framing@2.1.0"]
     );
     expect(done.generation.costUsd).toBeGreaterThan(0);
     expect(done.usage.costUsd).toBeGreaterThanOrEqual(done.generation.costUsd);
@@ -212,7 +235,7 @@ describe("end to end across languages (ADR-001 D8): web queues → Python worker
   });
 
   it("reads research provenance through RLS: sources, verified quotes, citations (local TLS site, no network)", async () => {
-    const { repo, run } = await aliceRun();
+    const { repo, run } = await aliceRun(OPTS, "deep");
     const worker = spawnSync("uv", ["run", "--no-sync", "--directory", workerDir, "python", "-m", "tests.e2e_fake_model", "--research"], {
       env: { ...process.env, DATABASE_URL: workerUrl }, encoding: "utf8", timeout: 120_000
     });
@@ -234,6 +257,9 @@ describe("end to end across languages (ADR-001 D8): web queues → Python worker
       expect(backed, citation.source_id).toBe(true);
     }
     expect(evidence.claims.some(c => c.contradicted)).toBe(true);
+    // Deep tier: the contradiction and the high-severity critique justified escalation; with no escalation model configured
+    // the worker records that it could not escalate, rather than silently doing nothing.
+    expect(done.route.escalation).toBe("escalation triggered (contradiction, high_severity_critique) but no escalation model is configured");
     expect(await store.forOwner(bob).getEvidence(run.id)).toEqual({ sources: [], claims: [] });
   });
 

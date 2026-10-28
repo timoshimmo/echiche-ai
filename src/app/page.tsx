@@ -5,6 +5,7 @@ import {
   RUN_ERROR_MESSAGES, RUN_STAGES, SETTLED_STATUSES,
   type CurrentUser, type Project, type RunStage, type ThoughtRunWithEvents
 } from "@/lib/domain/types";
+import { ROUTING_POLICY } from "@/lib/domain/routing";
 import { DecisionBriefView, generationDetail, generationLabel } from "./decision-brief";
 import { Journal } from "./journal";
 
@@ -18,12 +19,43 @@ const STAGE_LABEL: Record<RunStage, string> = {
 };
 const POLL_MS = 1500;
 
+type Depth = "auto" | "quick" | "standard" | "deep";
+const DEPTHS: [Depth, string][] = [
+  ["auto", "Automatic (recommended)"],
+  ["quick", "Quick: no research or checks"],
+  ["standard", "Standard: research and checks"],
+  ["deep", "Deep: more research"]
+];
+const DEPTH_HINT: Record<Depth, string> = {
+  auto: "Echiche sizes the run to the question and shows why.",
+  quick: "Frames and answers only: no web research, critique or verification.",
+  standard: "Researches, critiques and verifies claims before the brief.",
+  deep: "More research; may use a stronger model for the brief when sources conflict."
+};
+/** Stages a tier leaves out (ADR-010); the worker checkpoints them as skipped. */
+const ROUTED: Partial<Record<RunStage, "research" | "critique" | "verify">> = { researching: "research", critiquing: "critique", verifying: "verify" };
+function skipped(route: ThoughtRunWithEvents["route"], stage: RunStage): boolean {
+  const flag = ROUTED[stage];
+  return !!(route.tier && flag && !ROUTING_POLICY.tiers[route.tier].pipeline[flag]);
+}
+function escalationText(text: string): string {
+  return text.replace("high_severity_critique", "a high-severity critique").replace("contradiction", "sources disagree");
+}
+const TIER_LABEL = { low: "Quick", medium: "Standard", high: "Deep" } as const;
+
+/** Why the router chose this tier, in the words of its deterministic reasons (ADR-010). */
+function routeReasons(route: ThoughtRunWithEvents["route"]): string[] {
+  const reasons = route.reasons.map(r => `${r.signal.replace("_", " ")} ${r.points >= 0 ? "+" : ""}${r.points}: ${r.detail}`);
+  return [...(reasons.length ? reasons : ["no signals matched"]), `policy ${route.policyVersion ?? "unknown"}`];
+}
+
 export default function HomePage() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedId, setSelectedId] = useState("");
   const [title, setTitle] = useState("");
   const [problemStatement, setProblemStatement] = useState("");
   const [prompt, setPrompt] = useState("");
+  const [depth, setDepth] = useState<Depth>("auto");
   const [run, setRun] = useState<ThoughtRunWithEvents | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
@@ -103,7 +135,7 @@ export default function HomePage() {
       const { response, body } = await api(`/api/projects/${selectedId}/runs`, {
         method: "POST",
         headers: { "content-type": "application/json", "idempotency-key": crypto.randomUUID() },
-        body: JSON.stringify({ prompt })
+        body: JSON.stringify({ prompt, depth })
       });
       if (!response.ok) throw new Error(body.error?.message ?? "Could not start the run");
       setRun({ ...body.data, events: [] });
@@ -148,6 +180,9 @@ export default function HomePage() {
           <div className="section-heading"><span className="step">03</span><div><h2>Start a thought run</h2><p>A bounded, transparent first-pass workflow.</p></div></div>
           <form onSubmit={startRun} className="form-stack">
             <label>Your question or decision<textarea value={prompt} onChange={e => setPrompt(e.target.value)} minLength={10} maxLength={8000} required rows={5} placeholder="What decision do you need to make, and what do you need to understand?" /></label>
+            <label>Depth<select value={depth} onChange={e => setDepth(e.target.value as Depth)}>
+              {DEPTHS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+            </select><small className="hint">{DEPTH_HINT[depth]}</small></label>
             <button disabled={busy || !selectedId || !settled}>{!settled ? "Run in progress…" : "Run deep thought"} <span>↗</span></button>
           </form>
           <div className="workflow"><div><span>01</span><strong>Frame</strong><small>Define the decision</small></div><i>→</i><div><span>02</span><strong>Challenge</strong><small>Test assumptions</small></div><i>→</i><div><span>03</span><strong>Synthesize</strong><small>Choose a next step</small></div></div>
@@ -159,8 +194,14 @@ export default function HomePage() {
             {(result || run.generation.mode === "model") && <p className="generation" title={generationDetail(run.generation) ?? undefined}>{generationLabel(run.generation)}</p>}</div>
           <span className="status-pill">{STATUS_LABEL[run.status]}{run.cancelRequested && !settled ? " · cancelling" : ""}</span>
         </div>
+        {run.route.tier && <details className="route">
+          <summary>{TIER_LABEL[run.route.tier]} run{run.route.requestedDepth === "auto" ? ", chosen automatically" : ", as you asked"}
+            {run.route.escalation && <> · {escalationText(run.route.escalation)}</>}</summary>
+          <ul>{routeReasons(run.route).map(line => <li key={line}>{line}</li>)}</ul>
+        </details>}
         <ol className="stage-progress">
           {RUN_STAGES.map(stage => {
+            if (skipped(run.route, stage)) return <li key={stage} className="skipped">– {STAGE_LABEL[stage]} skipped</li>;
             const state = run.completedStages.includes(stage) ? "done" : run.status === stage ? "active" : "todo";
             return <li key={stage} className={state}>{state === "done" ? "✓ " : state === "active" ? "… " : ""}{STAGE_LABEL[stage]}</li>;
           })}

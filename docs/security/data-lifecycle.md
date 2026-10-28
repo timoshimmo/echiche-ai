@@ -8,7 +8,7 @@ _Status as of M6 (2026-10-28). Items marked **open** need a decision before the 
 |---|---|---|
 | Account (email, auth metadata, sessions) | Supabase Auth (`auth` schema) | Email address |
 | Projects (title, problem statement, archived flag) | `echiche.projects` | **Yes**, potentially confidential strategy |
-| Thought runs (prompt, structured result, status) | `echiche.thought_runs` | **Yes** |
+| Thought runs (prompt, structured result, status; since M7 also the route: requested depth, tier, the router's reasons, which quote matched words from the prompt, and the escalation outcome) | `echiche.thought_runs` | **Yes** |
 | Run events (stage names and fixed status messages) | `echiche.run_events` | No (fixed strings today) |
 | Stage checkpoints (intermediate stage outputs) | `echiche.run_stage_outputs` | **Yes**: derived from the prompt; deleted with the run |
 | Stage checkpoints from the model (frame, critique, brief as structured data) | `echiche.run_stage_outputs` (`stage-output.v2`) | **Yes**: model output derived from the prompt; deleted with the run |

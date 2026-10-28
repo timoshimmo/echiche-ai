@@ -77,6 +77,7 @@ class ClaimedRun:
     usage: Usage
     project_context: str = ""
     project_id: str = ""
+    route_tier: str | None = None  # M7; None for runs queued before routing existed
 
 
 def to_v2(output: StageOutput) -> StageOutputV2:
@@ -123,6 +124,7 @@ def _claimed(row: Row) -> ClaimedRun:
             research_calls=cast(int, row["research_calls_used"]),
             cost_usd=cast(Decimal, row["cost_usd_used"]),
         ),
+        route_tier=cast(str | None, row.get("route_tier")),
     )
 
 
@@ -427,6 +429,7 @@ class RunStore:
         calls: Sequence[ModelCallRecord] = (),
         research_records: Sequence[ResearchCallRecord] = (),
         memory_context: Sequence[ContextItem] = (),
+        escalation: str | None = None,
     ) -> Usage:
         """cost_usd must include the cost of `calls` and `research_records`. The checkpoint,
         usage, telemetry, and any sources or claims it carries are written in one transaction."""
@@ -467,6 +470,9 @@ class RunStore:
                     self._insert_sources(run, EvidenceSetV1.model_validate(output.data))
                 elif output.data_schema == VERIFICATION_REPORT_SCHEMA_VERSION and output.data is not None:
                     self._insert_claims(run, VerificationReportV1.model_validate(output.data))
+                if escalation:
+                    self._guarded_update(run.id, "route_escalation = %s", (escalation[:300],))
+                    self._event(run, "status", output.stage, f"Route: {escalation}"[:500])
                 self._event(run, "stage", output.stage, f"{output.title}: completed")
         return _claimed(row).usage
 

@@ -54,7 +54,7 @@ def test_model_run_stores_a_decision_brief_and_call_telemetry(admin: Admin, stor
     assert [(c["stage"], c["outcome"], c["prompt_version"]) for c in calls] == [
         ("planning", "ok", "2.1.0"),
         ("critiquing", "ok", "2.1.0"),
-        ("synthesizing", "ok", "2.2.0"),
+        ("synthesizing", "ok", "2.3.0"),
     ]
     assert all(len(c["prompt_sha256"]) == 64 and c["provider"] == "openai" for c in calls)
     expected = sum(spend(Decimal(c["cost_usd"])) for c in calls)

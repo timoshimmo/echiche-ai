@@ -18,6 +18,7 @@ from threading import Event
 
 from echiche_worker.executor import ExecutorSettings, execute
 from echiche_worker.research_pipeline import ResearchSettings
+from echiche_worker.routing import load_policy
 from echiche_worker.store import RunStore, connect
 
 from .model_fakes import FakeModelClient, model_provider
@@ -53,7 +54,8 @@ def main(argv: list[str]) -> int:
         with connect(os.environ["DATABASE_URL"]) as conn:
             store = RunStore(conn, "worker-e2e-model", 30)
             while (run := store.claim()) is not None:
-                execute(run, store, provider, ExecutorSettings(stage_timeout_seconds=30), Event())
+                settings = ExecutorSettings(stage_timeout_seconds=30, routing=load_policy())  # as in production
+                execute(run, store, provider, settings, Event())
     finally:
         if site is not None:
             site.close()

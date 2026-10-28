@@ -295,7 +295,9 @@ describe("asynchronous runs (M3)", () => {
     expect(response.status).toBe(202);
     const run = (await response.json()).data;
     expect(response.headers.get("location")).toBe(`/api/runs/${run.id}`);
-    expect(run).toMatchObject({ status: "queued", result: null, completedStages: [], budget: { maxSteps: 18, maxActiveSeconds: 600 } });
+    // "should" (uncertainty) + a new project (novelty) → medium tier: its caps tighten the configured 18 steps / 600 s.
+    expect(run).toMatchObject({ status: "queued", result: null, completedStages: [], budget: { maxSteps: 8, maxActiveSeconds: 420 } });
+    expect(run.route).toMatchObject({ requestedDepth: "auto", tier: "medium", policyVersion: "routing-policy.v1" });
     const fetched = await (await getRun(get(), params({ runId: run.id }))).json();
     expect(fetched.data.evidence).toEqual({ sources: [], claims: [] });
     expect(run.generation).toEqual({
@@ -338,7 +340,8 @@ describe("asynchronous runs (M3)", () => {
     const { run: paused } = await aliceProjectAndRun();
     store.simulateWorker(paused.id, { status: "paused_for_budget", errorCode: "BUDGET_STEPS" });
     const resumed = (await (await resumeRun(req("/"), params({ runId: paused.id }))).json()).data;
-    expect(resumed).toMatchObject({ status: "queued", errorCode: null, budget: { maxSteps: 27, maxActiveSeconds: 900 } });
+    // low tier (5 steps / 180 s) plus the resume increment (half the configured budget: 9 / 300)
+    expect(resumed).toMatchObject({ status: "queued", errorCode: null, budget: { maxSteps: 14, maxActiveSeconds: 480 } });
 
     const { run: review } = await aliceProjectAndRun();
     store.simulateWorker(review.id, { status: "awaiting_user_review" });
@@ -379,5 +382,20 @@ describe("research evidence (M5)", () => {
     expect(mine.evidence.sources[0].url).toBe("https://survey.example/r");
     as(BOB);
     expect((await getRun(get(), params({ runId: run.id }))).status).toBe(404);
+  });
+});
+
+describe("routing (M7)", () => {
+  it("records the tier and reasons, honours a requested depth, and rejects unknown depths", async () => {
+    as(ALICE);
+    const project = (await (await createProject(req("/api/projects", { body: { title: "Routing", problemStatement: "Routing behaviour check." } }))).json()).data;
+    const deep = (await (await startRun(req("/", { body: { prompt: "Should we invest $200k to enter the Kenyan market against competitors?" } }), params({ projectId: project.id }))).json()).data;
+    expect(deep.route.tier).toBe("high");
+    expect(deep.route.reasons.map((r: { signal: string }) => r.signal)).toEqual(expect.arrayContaining(["consequence", "uncertainty", "evidence_need", "novelty"]));
+    const quick = (await (await startRun(req("/", { body: { prompt: "Should we invest $200k to enter the Kenyan market?", depth: "quick" } }), params({ projectId: project.id }))).json()).data;
+    expect(quick.route).toMatchObject({ tier: "low", requestedDepth: "quick" });
+    expect(quick.budget).toMatchObject({ maxResearchCalls: 0, maxCostUsd: 0.1 });
+    const bad = await startRun(req("/", { body: { prompt: "A valid question here?", depth: "extreme" } }), params({ projectId: project.id }));
+    expect(bad.status).toBe(400);
   });
 });

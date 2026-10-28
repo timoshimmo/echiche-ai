@@ -181,3 +181,45 @@ def test_check_config_builds_the_research_pipeline(
     assert main(["--check-config"]) == 0
     out = capsys.readouterr().out
     assert "openai:gpt-6.1-sol+brave" in out and BRAVE not in out
+
+
+# --- adaptive compute (M7) ---------------------------------------------------------------------
+
+
+def test_escalation_model_is_optional_and_must_differ_from_the_default() -> None:
+    base = {"DATABASE_URL": URL_OK, "REASONING_PROVIDER": "openai", "OPENAI_API_KEY": KEY}
+    assert parse_worker_config(base).openai_escalation_model is None
+    assert (
+        parse_worker_config(base | {"OPENAI_ESCALATION_MODEL": "gpt-6-astra"}).openai_escalation_model == "gpt-6-astra"
+    )
+    same = issues_of(base | {"OPENAI_ESCALATION_MODEL": "gpt-6.1-sol"})
+    assert any("OPENAI_ESCALATION_MODEL" in i for i in same)
+    # ignored outside the model provider (demo mode never escalates)
+    demo = {"DATABASE_URL": URL_OK, "OPENAI_ESCALATION_MODEL": "gpt-6-astra"}
+    assert parse_worker_config(demo).openai_escalation_model is None
+
+
+def test_unpriced_escalation_model_fails_at_start_up(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    for name, value in {
+        "DATABASE_URL": URL_OK,
+        "REASONING_PROVIDER": "openai",
+        "OPENAI_API_KEY": KEY,
+        "OPENAI_ESCALATION_MODEL": "gpt-unpriced",
+    }.items():
+        monkeypatch.setenv(name, value)
+    assert main(["--check-config"]) == 2
+    assert "OPENAI_ESCALATION_MODEL has no verified price" in capsys.readouterr().err
+    monkeypatch.setenv("OPENAI_ESCALATION_MODEL", "gpt-6-astra")
+    assert main(["--check-config"]) == 0
+    assert "routing-policy.v1" in capsys.readouterr().out
+
+
+def test_missing_routing_policy_fails_at_start_up(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("DATABASE_URL", URL_OK)
+    monkeypatch.setenv("ECHICHE_ROUTING_POLICY", "/nonexistent/routing-policy.json")
+    assert main(["--check-config"]) == 2
+    assert "routing policy" in capsys.readouterr().err

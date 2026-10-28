@@ -13,7 +13,10 @@ export const updateProjectSchema = z
     message: "Provide at least one field"
   });
 
-export const startRunSchema = z.object({ prompt: z.string().trim().min(10).max(8000) }).strict();
+/** depth: "auto" (default) lets the router decide; quick / standard / deep override it (ADR-010). */
+export const startRunSchema = z
+  .object({ prompt: z.string().trim().min(10).max(8000), depth: z.enum(["auto", "quick", "standard", "deep"]).optional() })
+  .strict();
 
 /** Route IDs are UUIDs. Anything else is treated as "not found" without touching storage. */
 export const resourceIdSchema = z.uuid();

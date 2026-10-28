@@ -29,8 +29,8 @@ VALID: dict[str, str] = {
 Step = ModelReply | ModelCallError | str | Callable[[ModelRequest], ModelReply]
 
 
-def reply(text: str, status: str = "completed", usage: TokenUsage = USAGE) -> ModelReply:
-    return ModelReply(status=status, text=text, usage=usage, model="gpt-6.1-sol-2026-09-01", latency_ms=42)
+def reply(text: str, status: str = "completed", usage: TokenUsage = USAGE, model: str = "gpt-6.1-sol") -> ModelReply:
+    return ModelReply(status=status, text=text, usage=usage, model=f"{model}-2026-09-01", latency_ms=42)
 
 
 class FakeModelClient:
@@ -50,7 +50,7 @@ class FakeModelClient:
         if isinstance(step, ModelCallError):
             raise step
         if isinstance(step, str):
-            return reply(step)
+            return reply(step, model=self.model)
         if isinstance(step, ModelReply):
             return step
         return step(request)

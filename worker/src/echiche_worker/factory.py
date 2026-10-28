@@ -22,6 +22,12 @@ def build_provider(config: WorkerConfig) -> ReasoningProvider:
             f"OPENAI_MODEL has no verified price (known: {', '.join(sorted(OPENAI_PRICES.prices))}); "
             "add it to llm.OPENAI_PRICES from the official pricing page first"
         )
+    escalation_model = config.openai_escalation_model
+    if escalation_model is not None and escalation_model not in OPENAI_PRICES.prices:
+        issues.append(
+            "OPENAI_ESCALATION_MODEL has no verified price; add it to llm.OPENAI_PRICES from the official "
+            "pricing page first, or leave it unset (escalation is then recorded as not available)"
+        )
     try:
         registry = PromptRegistry.load()
     except PromptRegistryError as error:
@@ -42,6 +48,14 @@ def build_provider(config: WorkerConfig) -> ReasoningProvider:
             OPENAI_PRICES,
             ModelSettings(residency=config.openai_data_residency, max_output_tokens=config.openai_max_output_tokens),
             research=build_research(config),
+            escalation=OpenAIModelClient(
+                api_key=config.openai_api_key,
+                model=escalation_model,
+                data_residency=config.openai_data_residency,
+                reasoning_effort=config.openai_reasoning_effort,
+            )
+            if escalation_model
+            else None,
         )
     except (PromptRegistryError, ValueError, KeyError) as error:
         raise ConfigError([f"reasoning provider: {error}"]) from error

@@ -58,6 +58,8 @@ Docker (same image Render builds; context is the repo root because the image inc
 | `OPENAI_DATA_RESIDENCY` | no | `global` | `global` or `eu` (`eu` needs OpenAI's approval; +10% price) |
 | `OPENAI_MAX_OUTPUT_TOKENS` | no | `4000` | 256–32000; also the output term of the worst-case cost check |
 | `ECHICHE_PROMPTS_DIR` | no | `<repo>/prompts/runtime` | Set in the Docker image |
+| `OPENAI_ESCALATION_MODEL` | no | unset | Deep runs only: stronger model for synthesis on a contradiction or high-severity critique (ADR-010). Must have a verified price and differ from `OPENAI_MODEL`. Unset = never escalate; the run records that escalation was justified but unavailable |
+| `ECHICHE_ROUTING_POLICY` | no | `<repo>/config/routing-policy.json` | The routing policy shared with the web app; set in the Docker image. Invalid or missing = start-up fails |
 | `RESEARCH_PROVIDER` | no | `none` | `none` or `brave` (`brave` requires `REASONING_PROVIDER=openai`) |
 | `BRAVE_SEARCH_API_KEY` | with `brave` | — | Secret. Worker only; redacted from config output |
 | `RESEARCH_MAX_QUERIES` | no | `3` | 1–8 searches per run, also capped by the run's research budget |

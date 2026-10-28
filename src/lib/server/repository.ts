@@ -78,6 +78,7 @@ export interface OwnerScopedRepository {
   resumeRun(runId: string, increment: RunBudget): Promise<ThoughtRun | null>;
 }
 
+/** budget = the operator's configured caps; the router may tighten them per tier (ADR-010). */
 export type CreateRunOptions = { maxPerHour: number; budget: RunBudget; idempotencyKey?: string };
 
 export interface Store {

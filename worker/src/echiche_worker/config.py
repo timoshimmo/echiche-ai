@@ -52,6 +52,7 @@ class WorkerConfig:
     fetch_timeout_seconds: float = 8.0
     fetch_max_bytes: int = 2_000_000
     research_stale_days: int = 730
+    openai_escalation_model: str | None = None
 
     def __repr__(self) -> str:  # never print the connection string or API key
         return (
@@ -68,7 +69,8 @@ class WorkerConfig:
             f"research_results_per_query={self.research_results_per_query}, "
             f"research_max_pages={self.research_max_pages}, "
             f"fetch_timeout_seconds={self.fetch_timeout_seconds}, fetch_max_bytes={self.fetch_max_bytes}, "
-            f"research_stale_days={self.research_stale_days})"
+            f"research_stale_days={self.research_stale_days}, "
+            f"openai_escalation_model={self.openai_escalation_model!r})"
         )
 
     __str__ = __repr__
@@ -124,6 +126,7 @@ def parse_worker_config(env: Mapping[str, str]) -> WorkerConfig:
     model = _blank_to_none(env.get("OPENAI_MODEL")) or DEFAULT_OPENAI_MODEL
     effort = _blank_to_none(env.get("OPENAI_REASONING_EFFORT"))
     residency = (_blank_to_none(env.get("OPENAI_DATA_RESIDENCY")) or "global").lower()
+    escalation_model = _blank_to_none(env.get("OPENAI_ESCALATION_MODEL"))
     max_output = _number(env, "OPENAI_MAX_OUTPUT_TOKENS", "4000", 256, 32000, issues)
     if provider == "openai":
         if api_key is None:
@@ -134,6 +137,10 @@ def parse_worker_config(env: Mapping[str, str]) -> WorkerConfig:
             issues.append(f"OPENAI_REASONING_EFFORT must be one of {', '.join(OPENAI_REASONING_EFFORTS)}")
         if residency not in OPENAI_RESIDENCIES:
             issues.append(f"OPENAI_DATA_RESIDENCY must be one of {', '.join(OPENAI_RESIDENCIES)}")
+        if escalation_model is not None and (
+            not re.fullmatch(r"[A-Za-z0-9._-]{1,100}", escalation_model) or escalation_model == model
+        ):
+            issues.append("OPENAI_ESCALATION_MODEL must be a model ID different from OPENAI_MODEL")
         if not float(max_output).is_integer():
             issues.append("OPENAI_MAX_OUTPUT_TOKENS must be a whole number")
 
@@ -177,4 +184,5 @@ def parse_worker_config(env: Mapping[str, str]) -> WorkerConfig:
         fetch_timeout_seconds=fetch_timeout,
         fetch_max_bytes=int(fetch_bytes),
         research_stale_days=int(stale_days),
+        openai_escalation_model=escalation_model if provider == "openai" else None,
     )

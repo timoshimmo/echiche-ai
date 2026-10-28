@@ -1,0 +1,193 @@
+{
+  "version": "routing-policy.v1",
+  "description": "Deterministic complexity router (ADR-010). The web app classifies each run when it is queued; the worker shapes the pipeline from the tier. Terms match at the start of a word, case-insensitively ('pric' matches 'pricing'; 'lease' does not match 'please'). Edit, bump the version, and re-run the evaluation before deploying a change.",
+  "signals": {
+    "consequence": {
+      "weight": 3,
+      "magnitude_bonus": 1,
+      "description": "Commitments that are costly or hard to reverse. The bonus applies when two different terms match or an amount of money is named.",
+      "terms": [
+        "invest",
+        "raise",
+        "fundrais",
+        "acqui",
+        "hire",
+        "hiring",
+        "fire",
+        "layoff",
+        "lay off",
+        "launch",
+        "contract",
+        "lease",
+        "legal",
+        "lawsuit",
+        "regulat",
+        "complian",
+        "pric",
+        "market entry",
+        "enter",
+        "expand",
+        "pivot",
+        "shut down",
+        "quit",
+        "partner",
+        "equity",
+        "loan",
+        "irreversib",
+        "long-term",
+        "exclusive",
+        "sign"
+      ],
+      "money_pattern": "(\\$|usd|eur|ngn|£|€|₦)\\s?\\d|\\d[\\d,.]*\\s?(k|m|million|billion|usd|eur|naira|dollars|euros|pounds)\\b"
+    },
+    "comparison": {
+      "weight": 2,
+      "description": "Weighing named options against each other.",
+      "terms": [
+        "compare",
+        "vs",
+        "versus",
+        "which",
+        "or",
+        "better",
+        "worth"
+      ]
+    },
+    "uncertainty": {
+      "weight": 1,
+      "description": "An open question rather than a request.",
+      "terms": [
+        "should",
+        "whether",
+        "risk",
+        "unsure",
+        "not sure",
+        "uncertain",
+        "trade-off",
+        "tradeoff",
+        "best way"
+      ]
+    },
+    "evidence_need": {
+      "weight": 2,
+      "description": "Needs facts from outside the project.",
+      "terms": [
+        "market",
+        "competitor",
+        "benchmark",
+        "statistic",
+        "data",
+        "evidence",
+        "research",
+        "latest",
+        "trend",
+        "industry",
+        "regulation",
+        "cost of",
+        "average",
+        "how much do",
+        "survey",
+        "churn"
+      ]
+    },
+    "novelty": {
+      "weight": 1,
+      "description": "1 when the project has no current decision and no remembered items; 0 otherwise."
+    },
+    "lookup": {
+      "weight": -5,
+      "description": "Recall or drafting from what is already known.",
+      "terms": [
+        "what did we decide",
+        "what did i decide",
+        "remind me",
+        "summarize",
+        "summarise",
+        "recap",
+        "what do we know",
+        "list our",
+        "current decision",
+        "rewrite",
+        "write a"
+      ]
+    }
+  },
+  "thresholds": {
+    "medium": 2,
+    "high": 5
+  },
+  "depth_overrides": {
+    "quick": "low",
+    "standard": "medium",
+    "deep": "high"
+  },
+  "tiers": {
+    "low": {
+      "label": "Quick",
+      "pipeline": {
+        "research": false,
+        "critique": false,
+        "verify": false,
+        "memory": true,
+        "allow_escalation": false
+      },
+      "research": {
+        "max_queries": 0,
+        "max_pages": 0
+      },
+      "budget": {
+        "max_steps": 5,
+        "max_active_seconds": 180,
+        "max_research_calls": 0,
+        "max_cost_usd": 0.1
+      }
+    },
+    "medium": {
+      "label": "Standard",
+      "pipeline": {
+        "research": true,
+        "critique": true,
+        "verify": true,
+        "memory": true,
+        "allow_escalation": false
+      },
+      "research": {
+        "max_queries": 2,
+        "max_pages": 4
+      },
+      "budget": {
+        "max_steps": 8,
+        "max_active_seconds": 420,
+        "max_research_calls": 3,
+        "max_cost_usd": 0.3
+      }
+    },
+    "high": {
+      "label": "Deep",
+      "pipeline": {
+        "research": true,
+        "critique": true,
+        "verify": true,
+        "memory": true,
+        "allow_escalation": true
+      },
+      "research": {
+        "max_queries": 4,
+        "max_pages": 8
+      },
+      "budget": {
+        "max_steps": 12,
+        "max_active_seconds": 900,
+        "max_research_calls": 6,
+        "max_cost_usd": 1.0
+      }
+    }
+  },
+  "escalation": {
+    "description": "High tier only: synthesis uses OPENAI_ESCALATION_MODEL (if configured and priced) when verification found a contradiction, or the critique rated a challenged assumption or risk 'high'.",
+    "triggers": [
+      "contradiction",
+      "high_severity_critique"
+    ]
+  }
+}

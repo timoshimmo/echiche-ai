@@ -1,6 +1,6 @@
 # Implementation and verification status
 
-_Last updated: 2026-10-28 (M6, "Memory and decision journal")_
+_Last updated: 2026-10-28 (M7, "Evaluation and adaptive compute")_
 
 "Verified" means the check was actually run, with the stated result, in the environment noted. Code presence alone is not verification.
 
@@ -11,15 +11,49 @@ From a **clean clone** against a **fresh database**:
 | Check | Result |
 |---|---|
 | `npm ci` · typecheck · lint | ✅ · 0 errors · 0 problems |
-| `npm test` (web unit: routes incl. owner-scoped evidence and the memory/decision journal, config incl. refusing `OPENAI_API_KEY`, contracts) | ✅ 77 tests |
+| `npm test` (web unit: routes incl. owner-scoped evidence, the memory/decision journal and routing; config incl. refusing `OPENAI_API_KEY`; contracts; the router incl. labelled cases and benchmark drift) | ✅ 85 tests |
 | `npm run build` (no env); client-bundle scan; `npm audit --omit=dev` | ✅ · none found · 0 vulnerabilities |
-| `npm run test:db:prepare` from empty (0001–0007 via Supabase CLI), then re-run | ✅ · ✅ no-op |
-| `npm run test:integration`: repository + RLS as `echiche_web`, plus **three cross-language E2Es**: the demo worker CLI; the model pipeline with a scripted model; research over a local TLS site, where every brief citation resolves to a stored source and a verified quote, read by TS through RLS; memory continuity across runs. Plus journal tests on real Postgres. | ✅ 40 tests |
+| `npm run test:db:prepare` from empty (0001–0008 via Supabase CLI), then re-run | ✅ · ✅ no-op |
+| `npm run test:integration`: repository + RLS as `echiche_web`, plus **three cross-language E2Es**: the demo worker CLI; the model pipeline with a scripted model; research over a local TLS site, where every brief citation resolves to a stored source and a verified quote, read by TS through RLS; memory continuity across runs; the quick route in the real worker CLI. Plus journal tests on real Postgres. | ✅ 41 tests |
 | Worker: `uv sync --locked`, ruff, ruff format, pyright strict (incl. tests), `contracts --check` | ✅ |
-| Worker unit tests (incl. prompt registry, model pipeline, OpenAI adapter, Brave adapter, fetcher guards over real TLS, research and verification pipeline with adversarial fixtures, memory selection) | ✅ 145 tests |
-| Worker integration (as `echiche_worker`, incl. the memory benchmark) | ✅ 43 tests |
-| Same web and worker integration suites on a **fresh cluster with a Supabase-like admin** (non-superuser, CREATEROLE, BYPASSRLS) | ✅ 40 + 43 |
+| Worker unit tests (incl. prompt registry, model pipeline, OpenAI adapter, Brave adapter, fetcher guards over real TLS, research and verification pipeline with adversarial fixtures, memory selection, routing and escalation, **the fake evaluation benchmark and its gates**) | ✅ 164 tests |
+| Worker integration (as `echiche_worker`, incl. the memory benchmark and routed runs) | ✅ 48 tests |
+| `uv run python -m evals.run` (33 cases × variants A/B/C/R, scripted model) | ✅ all 13 invariant gates pass |
+| Same web and worker integration suites on a **fresh cluster with a Supabase-like admin** (non-superuser, CREATEROLE, BYPASSRLS) | ✅ 41 + 48 |
 | Upgrading an M3 database with 25 runs: only 0005 applied; M3 `stage-output.v1` checkpoints still load (integration test) | ✅ |
+
+**M7 checks.** No live model or search call was made. Fake mode only; every number below comes from a scripted model and is **not a quality claim**.
+- **Router:**
+  - deterministic, with every point of the score explained;
+  - the user's depth overrides it;
+  - budgets are the element-wise minimum of configured and tier;
+  - agreement 23/24 on the labelled cases (the known miss, R07, is documented, not tuned away);
+  - the benchmark's recorded tiers match the router (drift test);
+  - matching is on word starts ("lease" ≠ "please"), and reasons quote the user's own words.
+- **Worker routing:**
+  - low-tier runs checkpoint research, critique and verification as skipped, make 2 model calls, use 5 steps, and disclose it in the brief;
+  - medium never escalates;
+  - high escalates synthesis on a contradiction or a high-severity critique, records the model in `model_calls`, and writes `route_escalation` and an event;
+  - when escalation is justified but no model is configured, or it would exceed the cap, that is recorded too;
+  - pre-M7 runs (no tier) run the full pipeline;
+  - the worker cannot change the route decision (column grants);
+  - an unpriced escalation model, or a missing or invalid policy file, fails start-up (exit 2).
+- **Cross-language:** the web queues, the real worker CLI runs the quick route, and the web reads the skipped stages. The deep-tier research E2E records "escalation triggered (contradiction, high_severity_critique) but no escalation model is configured".
+- **Evaluation benchmark:** 33 synthetic cases, 11 categories, four variants, results versioned with commit, prompt and policy versions ([ADR-010 §4](docs/decisions/010-evaluation-and-adaptive-compute.md)).
+  - B (no verification) cited unsupported sources 4 times and claimed unearned "high" confidence twice. C and R did neither.
+  - **Injected text was echoed** by the adversarial scripted model in B, C and R (2 of 3 cases). This is measured, not gated: deterministic guards don't stop it.
+- **Found and fixed:** memory retrieval could not recall a fact in a one- or two-item project (case M05). The M6 seeded benchmark still scores 1.00 / 1.00 / 1.00.
+- **Mutation checks** (each makes tests fail):
+  - ignoring tier skipping;
+  - loosening tier budgets;
+  - not recording escalation;
+  - escalating outside the high tier;
+  - loosening tier research caps;
+  - removing the small-project recall floor;
+  - dropping the quick-route disclosure;
+  - substring term matching;
+  - disabling the brief guard (eval gates).
+- **UI:** the depth selector (with a hint) and the route line (tier, how it was chosen, escalation, expandable reasons, skipped stages) were rendered and inspected at desktop and 390 px widths, with no horizontal scroll.
 
 **M6 checks.**
 - **Seeded retrieval benchmark** (real Postgres, as `echiche_worker`; 14 memories, 2 owners, 3 projects, 8 queries incl. 3 that must recall nothing): recall 1.00, precision 1.00, abstention 1.00. No superseded, unapproved, rejected, other-project or other-user item surfaced. The canonical decision always came first.
@@ -106,7 +140,9 @@ What is enforced:
 
 - **A live Brave search and live page fetching.** The opt-in test (`ECHICHE_LIVE_BRAVE=1 … pytest -m live -k research`) is for the decision owner to run.
 - **Brave's written confirmation** of transient result use and excerpt storage on the chosen plan (licensing; ADR-008).
-- **A live OpenAI call.** The opt-in smoke test (`ECHICHE_LIVE_OPENAI=1 … pytest -m live`) is for the decision owner to run with their own key. Model quality is unevaluated until M7.
+- **A live OpenAI call.** The opt-in smoke test (`ECHICHE_LIVE_OPENAI=1 … pytest -m live`) is for the decision owner to run with their own key.
+- **A live, human-reviewed evaluation baseline** (procedure: [evaluation runbook](docs/runbooks/evaluation.md)). Real model quality, cost and latency are unmeasured, so no quality, cost or latency gates exist yet.
+- **Escalation with a real second model.** It is tested only with a scripted client.
 - **Not verified in OpenAI's docs:** the context window and supported reasoning-effort values of `gpt-6.1-sol`. The official model page was unreachable.
 
 - **GitHub Actions jobs:** `supabase-stack` (real local Supabase), the worker Docker build/run, and the overall first CI run.
@@ -114,6 +150,21 @@ What is enforced:
 - **The magic-link email round trip** (manual, local stack).
 
 ## Implemented
+
+**M7** (ADR-010 **proposed**, awaiting the owner's review)
+- **Migration 0008:** route columns on `thought_runs` (requested depth, tier, reasons, policy version, escalation outcome), with column grants.
+- **Routing:**
+  - `config/routing-policy.json` (`routing-policy.v1`), shared by both services;
+  - the web router (`src/lib/domain/routing.ts`) classifies at queue time and tightens budgets by tier;
+  - the worker (`routing.py`) skips stages per tier, tightens research caps, and escalates synthesis on configured triggers (`OPENAI_ESCALATION_MODEL`, optional, must be priced);
+  - synthesis prompt 2.3.0 handles a critique that was not run.
+- **Memory:** a word unique to one remembered item now always counts as distinctive (small-project recall).
+- **Evaluation:**
+  - `evals/` holds the router cases, `decision-benchmark.v1`, `gates.v1` and the committed fake report;
+  - `worker/evals/` holds the harness (scripted model, search and pages; an in-memory store driving the real executor; scoring; the CLI);
+  - CI runs the gates.
+- **Web:** the API accepts `depth`; runs carry `route`. The UI has a depth selector and a route line with reasons and skipped stages.
+- **Docs:** ADR-010, the evaluation runbook (live-baseline procedure and review sheet), README, worker README, `render.yaml`.
 
 **M6** (ADR-009 accepted 2026-10-28: hard delete; approved memory feeds later runs with provenance; JSON export)
 - **Migration 0007:** versioned `memories`, `decisions` and `decision_outcomes`, plus `run_memory_context`. Includes transition triggers, column grants and RLS, and project delete for owners.
@@ -182,10 +233,12 @@ What is enforced:
 | Gap | Milestone |
 |---|---|
 | Retention for rejected proposals and superseded versions; self-service account deletion; account-wide export | before pilot |
-| Lexical memory recall (differently worded memories can be missed; goals, constraints and the decision are always included) | M7 evaluation |
+| Lexical memory recall (differently worded memories can be missed; goals, constraints and the decision are always included). The fake benchmark covers recall and abstention; real-world recall needs the live review. | live baseline |
+| Lexical routing (wording-sensitive; the user can override; R07-type trivial choices route to medium) | revisit after the live baseline |
+| Deterministic guards do not stop a model that obeys instructions injected into fetched pages (it still can't cite unsupplied sources or claim unearned confidence) | decision: passage quarantine (ADR-010) |
 | Brave licensing confirmation; retention period for stored excerpts; privacy notice mention of Brave | before enabling research for real users |
 | No PDF or JavaScript-rendered pages; lexical passage selection; no cross-run search cache | later |
-| Model output not evaluated (no eval set) | M7 |
+| No live evaluation baseline yet; quality, cost and latency gates unset | before pilot (needs approval and a spend cap) |
 | Privacy notice must mention OpenAI (data sent, retention) | before real users |
 | A clarifying question from framing is shown as a limitation in the brief; there is no answer-and-continue round-trip yet | later |
 | No alerting on worker heartbeats or stale runs (visibility only); no Playwright E2E | M8 |

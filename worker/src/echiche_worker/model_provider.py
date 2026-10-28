@@ -22,6 +22,7 @@ Every model call:
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import time
 from collections.abc import Callable
@@ -78,8 +79,15 @@ from echiche_worker.research_pipeline import (
     quote_checked,
     usable_evidence,
 )
+from echiche_worker.routing import RouteSettings, escalation_reasons
 
 MAX_REPAIR_ATTEMPTS = 1
+NOT_RUN_CRITIQUE = json.dumps(
+    {
+        "not_run": "This run's route did not include a separate critique. Name the strongest objection yourself and "
+        "say in limitations that no independent critique was run."
+    }
+)
 PROMPT_IDS = (
     "decision-framing",
     "research-planner",
@@ -180,6 +188,15 @@ class ModelSettings:
     max_output_tokens: int
 
 
+def research_for(research: ResearchSettings, route: RouteSettings) -> ResearchSettings:
+    """The operator's research settings, tightened (never loosened) by the run's tier."""
+    return dataclasses.replace(
+        research,
+        max_queries=min(research.max_queries, route.max_queries if route.max_queries is not None else 99),
+        max_pages=min(research.max_pages, route.max_pages if route.max_pages is not None else 99),
+    )
+
+
 class ModelReasoningProvider:
     name = "model"
 
@@ -190,12 +207,16 @@ class ModelReasoningProvider:
         prices: PriceTable,
         settings: ModelSettings,
         research: ResearchSettings | None = None,
+        escalation: ModelClient | None = None,
     ) -> None:
         self.client = client
+        self.escalation = escalation
         self.prices = prices
         self.settings = settings
         self.research = research
         prices.price(client.model)  # unknown model -> KeyError at start-up, never at run time
+        if escalation is not None:
+            prices.price(escalation.model)
         self.prompts: dict[str, Prompt] = {}
         for prompt_id in PROMPT_IDS:
             prompt = registry.get(prompt_id)
@@ -233,11 +254,12 @@ class ModelReasoningProvider:
                 f"Missing evidence:\n{_bullets(critique.missing_evidence)}"
             )
             return self._result(stage, "Critique", content, critique, CRITIQUE_SCHEMA_VERSION, [])
-        critique = self._previous(ctx, "critiquing", CritiqueV1, CRITIQUE_SCHEMA_VERSION)
+        critique = self._optional(ctx, "critiquing", CritiqueV1, CRITIQUE_SCHEMA_VERSION)
         if stage == "verifying":
             return self._verifying(ctx, frame, evidence, deadline)
         report = self._report(ctx)
         evidence_json, allowed = usable_evidence(report, evidence)
+        client, escalation = self._synthesis_client(ctx, critique, report)
         brief = self._generate(
             "decision-brief-synthesis",
             stage,
@@ -245,18 +267,48 @@ class ModelReasoningProvider:
             DecisionBriefV1,
             {
                 "decision_frame_json": _json(frame),
-                "critique_json": _json(critique),
+                "critique_json": _json(critique) if critique is not None else NOT_RUN_CRITIQUE,
                 "evidence_json": evidence_json,
                 "project_memory_json": context_json(ctx.run_memory),
             },
             deadline,
             check=lambda b: check_brief(b, allowed),
+            client=client,
         )
         content = (
             f"Recommendation: {brief.recommendation.summary}\n\n"
             f"Confidence: {brief.confidence.level}. {brief.confidence.explanation}"
         )
-        return self._result(stage, "Decision brief", content, brief, DECISION_BRIEF_SCHEMA_VERSION, [])
+        result = self._result(stage, "Decision brief", content, brief, DECISION_BRIEF_SCHEMA_VERSION, [])
+        return dataclasses.replace(result, escalation=escalation)
+
+    def _synthesis_client(
+        self, ctx: StageContext, critique: CritiqueV1 | None, report: VerificationReportV1 | None
+    ) -> tuple[ModelClient, str | None]:
+        """High tier only: a stronger model for synthesis when a configured trigger fired (ADR-010).
+        The outcome is always recorded, including when escalation was justified but not possible."""
+        fired = escalation_reasons(ctx.route, critique, report)
+        if not fired:
+            return self.client, None
+        why = ", ".join(fired)
+        if self.escalation is None:
+            return self.client, f"escalation triggered ({why}) but no escalation model is configured"
+        worst = self.prices.worst_case(self.escalation.model, self._probe_request(), self.settings.residency)
+        if worst > ctx.remaining_cost_usd - ctx.spent_usd():
+            return self.client, f"escalation triggered ({why}) but skipped: it would exceed the remaining spend cap"
+        return self.escalation, f"synthesis escalated to {self.escalation.model} ({why})"
+
+    def _probe_request(self) -> ModelRequest:
+        """A size estimate for the escalation preflight; the real call is preflighted again."""
+        prompt = self.prompts["decision-brief-synthesis"]
+        return ModelRequest(
+            instructions=prompt.instructions,
+            data="x" * 60_000,
+            schema_name="probe",
+            json_schema={},
+            max_output_tokens=self.settings.max_output_tokens,
+            timeout_seconds=1.0,
+        )
 
     def _planning(self, ctx: StageContext, deadline: float) -> StageResult:
         memory = ctx.run_memory or select_context(ctx.project_memories, ctx.project_decision, ctx.prompt)
@@ -317,7 +369,7 @@ class ModelReasoningProvider:
             )
             return [q.query for q in result.queries][:limit]
 
-        evidence, searches = gather_evidence(self.research, ctx, frame, plan, deadline)
+        evidence, searches = gather_evidence(research_for(self.research, ctx.route), ctx, frame, plan, deadline)
         reads = "\n".join(f"- {s.source_id}: {s.title} ({s.domain})" for s in evidence.sources) or "- none"
         content = (
             f"Searches: {len(evidence.searches)} · sources read and kept: {len(evidence.sources)} · "
@@ -421,7 +473,9 @@ class ModelReasoningProvider:
         inputs: dict[str, str],
         deadline: float,
         check: Callable[[M], None] | None = None,
+        client: ModelClient | None = None,
     ) -> M:
+        client = client or self.client
         prompt = self.prompts[prompt_id]
         schema_name = prompt.meta.output_schema
         note: str | None = None
@@ -436,18 +490,30 @@ class ModelReasoningProvider:
                 max_output_tokens=self.settings.max_output_tokens,
                 timeout_seconds=max(1.0, deadline - time.monotonic()),
             )
-            self._preflight(ctx, request)
+            self._preflight(ctx, request, client)
             try:
-                reply = self.client.generate(request)
+                reply = client.generate(request)
             except ModelCallError as failure:
-                self._record(ctx, stage, prompt, repair, "error", failure.error.code, failure.usage, failure.latency_ms)
+                self._record(
+                    ctx,
+                    stage,
+                    prompt,
+                    repair,
+                    "error",
+                    failure.error.code,
+                    failure.usage,
+                    failure.latency_ms,
+                    client=client,
+                )
                 raise failure.error from failure
 
             if reply.status == "refused":
-                self._record_reply(ctx, stage, prompt, repair, "refused", ProviderRefusedError.code, reply)
+                self._record_reply(ctx, stage, prompt, repair, "refused", ProviderRefusedError.code, reply, client)
                 raise ProviderRefusedError("model refused")
             if reply.status == "truncated":
-                self._record_reply(ctx, stage, prompt, repair, "truncated", ProviderOutputTruncatedError.code, reply)
+                self._record_reply(
+                    ctx, stage, prompt, repair, "truncated", ProviderOutputTruncatedError.code, reply, client
+                )
                 raise ProviderOutputTruncatedError("model output hit max_output_tokens")
             try:
                 parsed = model.model_validate_json(reply.text)
@@ -458,18 +524,18 @@ class ModelReasoningProvider:
             except (ValidationError, GuardError) as error:
                 last = attempt == MAX_REPAIR_ATTEMPTS
                 code = InvalidProviderOutputError.code
-                self._record_reply(ctx, stage, prompt, repair, "invalid_output", code, reply)
+                self._record_reply(ctx, stage, prompt, repair, "invalid_output", code, reply, client)
                 if last:
                     raise InvalidProviderOutputError("output failed its contract after repair") from None
                 note = repair_note(error)
                 continue
-            self._record_reply(ctx, stage, prompt, repair, "ok", None, reply)
+            self._record_reply(ctx, stage, prompt, repair, "ok", None, reply, client)
             return parsed
         raise AssertionError("unreachable")
 
-    def _preflight(self, ctx: StageContext, request: ModelRequest) -> None:
+    def _preflight(self, ctx: StageContext, request: ModelRequest, client: ModelClient) -> None:
         remaining = ctx.remaining_cost_usd - ctx.spent_usd()
-        worst = self.prices.worst_case(self.client.model, request, self.settings.residency)
+        worst = self.prices.worst_case(client.model, request, self.settings.residency)
         if ctx.remaining_cost_usd <= 0 or worst > remaining:
             raise BudgetPreflightError("worst-case call cost exceeds the remaining spend cap")
 
@@ -482,8 +548,9 @@ class ModelReasoningProvider:
         outcome: CallOutcome,
         code: str | None,
         reply: ModelReply,
+        client: ModelClient,
     ) -> None:
-        self._record(ctx, stage, prompt, repair, outcome, code, reply.usage, reply.latency_ms, reply.model)
+        self._record(ctx, stage, prompt, repair, outcome, code, reply.usage, reply.latency_ms, reply.model, client)
 
     def _record(
         self,
@@ -496,12 +563,14 @@ class ModelReasoningProvider:
         usage: TokenUsage,
         latency_ms: int,
         model: str | None = None,
+        client: ModelClient | None = None,
     ) -> None:
+        client = client or self.client
         ctx.calls.append(
             ModelCallRecord(
                 stage=stage,
-                provider=self.client.provider,
-                model=(model or self.client.model)[:100],
+                provider=client.provider,
+                model=(model or client.model)[:100],
                 prompt_id=prompt.meta.id,
                 prompt_version=prompt.meta.version,
                 prompt_sha256=prompt.sha256,
@@ -514,7 +583,7 @@ class ModelReasoningProvider:
                 output_tokens=usage.output_tokens,
                 reasoning_tokens=usage.reasoning_tokens,
                 # Priced by the configured model: the response may name a dated snapshot.
-                cost_usd=self.prices.cost(self.client.model, usage, self.settings.residency),
+                cost_usd=self.prices.cost(client.model, usage, self.settings.residency),
                 latency_ms=latency_ms,
             )
         )

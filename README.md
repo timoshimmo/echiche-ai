@@ -1,6 +1,6 @@
-# Echiche (starter, milestone M6)
+# Echiche (starter, milestone M7)
 
-**Version:** 0.6.0 · **Stage:** M6 "Memory and decision journal" implemented (ADR-009 accepted); next is M7 (evaluation and adaptive compute).
+**Version:** 0.7.0 · **Stage:** M7 "Evaluation and adaptive compute" implemented (ADR-010 proposed, awaiting review); next is M8 (production hardening).
 
 > **Not production-ready yet.** Already in place:
 > - sign-in, per-user isolation (app checks plus row-level security), and CSRF/size/rate limits (M2);
@@ -10,7 +10,9 @@
 >
 > - user-controlled memory and a decision journal (M6). Runs propose memories, and nothing is kept until you approve it. Corrections create new versions. Accepted briefs become versioned decisions with outcomes. Later runs see what was remembered, labelled and dated. Export (JSON) and hard delete are built in.
 >
-> Still missing before real users: evaluation of the model output (M7), retention decisions, and the release gates in [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md).
+> - evaluation and adaptive compute (M7). A deterministic, explainable router sizes each run (quick / standard / deep; the user can override it) and records why. A synthetic benchmark runs the real pipeline offline against baselines in CI, gated on guardrail invariants.
+>
+> Still missing before real users: a **live, human-reviewed** evaluation baseline (and quality/cost gates set from it), retention decisions, and the release gates in [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md).
 
 ## Architecture
 
@@ -37,6 +39,10 @@ Two reasoning modes, and the UI labels every result with the mode that produced 
   - The model extracts claims with exact quotes. Each quote is checked against the passage text, then an independent model pass judges support.
   - The brief may cite only sources behind verified claims, and "high" confidence needs two independent domains.
   - With no usable evidence, the brief says research was insufficient and cites nothing.
+- **Adaptive compute** ([ADR-010](docs/decisions/010-evaluation-and-adaptive-compute.md), `config/routing-policy.json`):
+  - When a run is queued, a deterministic router scores the question (consequence, comparison, uncertainty, evidence need, novelty, lookup) into **quick**, **standard** or **deep**, or takes the depth the user chose.
+  - Quick runs skip research, critique and verification and say so. Each tier tightens the run's budget, never loosens it.
+  - Deep runs may escalate synthesis to `OPENAI_ESCALATION_MODEL` on a contradiction or a high-severity critique. The run records why, or why it could not.
 
 ## Requirements
 
@@ -101,6 +107,7 @@ Hosted setup:
 | `npm run test:db:prepare` | Prepares a **disposable** database from `TEST_ADMIN_DATABASE_URL`: adds a test-only Supabase shim if needed, applies migrations via the Supabase CLI, sets test role passwords |
 | `npm run test:integration` | Repository and RLS tests as the real runtime role, plus the cross-language E2E (web queues → Python worker runs → web reads). Needs `DATABASE_URL` (echiche_web), `WORKER_TEST_DATABASE_URL` (echiche_worker) and `TEST_ADMIN_DATABASE_URL`. Truncates data, so disposable databases only. |
 | `cd worker && uv run pytest -m integration` | Worker durability (crash/resume, concurrent claims, leases, cancellation, budgets, timeouts, state machine) and the model pipeline with a scripted model (briefs, telemetry, spend caps, repair, RLS on `model_calls`) |
+| `cd worker && uv run python -m evals.run [--write]` | Fake-mode benchmark (scripted model, offline, free): variants A/B/C/R, invariant gates (exit 1 on failure). See the [evaluation runbook](docs/runbooks/evaluation.md). |
 | `cd worker && ECHICHE_LIVE_OPENAI=1 OPENAI_API_KEY=… uv run pytest -m live -s` | **Real, billed** single OpenAI call (< $0.05). Opt-in only; never in CI. |
 | `cd worker && ECHICHE_LIVE_BRAVE=1 BRAVE_SEARCH_API_KEY=… uv run pytest -m live -s -k research` | **Real** single Brave search ($0.005) plus page fetches through the production guards. Opt-in only. |
 
@@ -111,7 +118,7 @@ CI (`.github/workflows/ci.yml`) has four jobs:
 | **web** | typecheck, lint, unit tests, build, client-bundle secret scan, production `npm audit` |
 | **integration** | plain Postgres 16 with the test shim: web integration, cross-language E2E, worker integration |
 | **supabase-stack** | the real local Supabase stack: integration and RLS suites, plus a check that the Auth server rejects a token after logout |
-| **worker** | ruff, pyright strict, pytest, contract-schema freshness, Docker image build and start |
+| **worker** | ruff, pyright strict, pytest, contract-schema freshness, the fake evaluation gates, Docker image build and start |
 
 ## API
 
@@ -125,7 +132,7 @@ Every route except `/api/health` and `/api/ready` requires a signed-in session (
 | `GET /api/projects/:id` | One project |
 | `PATCH /api/projects/:id` | Any of `{ title, problemStatement, archived }`; `archived:true` archives (idempotent) |
 | `GET /api/projects/:id/runs` | Runs (≤50) |
-| `POST /api/projects/:id/runs` | `{ prompt }` → **202** queued run plus `Location`. Optional `Idempotency-Key` header: a same-request replay returns 200; a different body returns 409. |
+| `POST /api/projects/:id/runs` | `{ prompt, depth? }` (`auto` default, `quick`, `standard`, `deep`) → **202** queued run plus `Location`; the run carries `route` (tier, reasons, policy version, escalation). Optional `Idempotency-Key` header: a same-request replay returns 200; a different body returns 409. |
 | `GET /api/runs/:id` | Run (status, completed stages, budget, usage, error code, `result` tagged with its `schemaVersion`, `generation` summary: mode, provider, models, prompt versions, calls, tokens, cost) plus events and `evidence` (sources read, with passages, and claims with their quotes and verdicts). Poll this. |
 | `POST /api/runs/:id/cancel` | Queued or paused: cancelled now. Active: stops at the next stage. Idempotent. |
 | `POST /api/runs/:id/accept` | awaiting review → completed |
@@ -181,16 +188,19 @@ supabase/               CLI config.toml and migrations
 worker/                 Python worker (claim loop, executor, store, contracts, prompt registry, OpenAI adapter,
                         Brave adapter, safe page fetcher, research and verification pipeline) + Dockerfile
 prompts/runtime/        versioned runtime prompts (registry format; ADR-007)
+config/                 routing-policy.json, shared by web and worker (ADR-010)
+evals/                  router cases, decision benchmark, gates, committed fake-mode report (ADR-010)
+worker/evals/           evaluation harness: scripted model/search/pages, scoring, CLI
 contracts/              JSON Schemas + shared fixtures
 render.yaml             Render Blueprint (Frankfurt)
-docs/decisions/         ADRs 001–009
-docs/runbooks/          Supabase setup, Render deploy, run operations
+docs/decisions/         ADRs 001–010
+docs/runbooks/          Supabase setup, Render deploy, run operations, evaluation
 docs/security/          data lifecycle: storage, export, deletion, retention
 ```
 
 ## Gates still open before real users
 
-1. ~~Provider adapter with token/time/spend caps~~ **[M4, done; ADR-007 accepted]**; output-quality evaluation **[M7]**
+1. ~~Provider adapter with token/time/spend caps~~ **[M4, done; ADR-007 accepted]**; ~~evaluation harness and router~~ **[M7, done; ADR-010 proposed]**; live, human-reviewed baseline and the quality/cost/latency gates set from it **[before pilot; needs approval and a spend cap]**
 2. ~~Claim/source provenance before web research~~ **[M5, done]**; Brave's written confirmation on result use and excerpt storage **[before enabling research for real users]**
 3. ~~In-app export and delete~~ **[M6, done]**; retention decisions and self-service account deletion ([data lifecycle](docs/security/data-lifecycle.md)) **[before pilot]**
 4. Custom SMTP, sign-up policy and other hosted Auth settings ([runbook](docs/runbooks/supabase-setup.md)) **[before pilot]**

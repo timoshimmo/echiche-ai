@@ -69,6 +69,7 @@ export type ThoughtRun = {
   status: RunStatus;
   result: RunResult | null;
   generation: GenerationSummary;
+  route: RunRoute;
   /** Stable machine-readable reason (failed, paused, or the last transient retry). See RUN_ERROR_MESSAGES. */
   errorCode: string | null;
   cancelRequested: boolean;
@@ -128,6 +129,16 @@ export type UpdateProjectInput = {
 
 export type StartRunInput = {
   prompt: string;
+  depth?: "auto" | "quick" | "standard" | "deep";
+};
+
+/** How the router sized this run (ADR-010). */
+export type RunRoute = {
+  requestedDepth: "auto" | "quick" | "standard" | "deep";
+  tier: "low" | "medium" | "high" | null;
+  reasons: { signal: string; points: number; detail: string }[];
+  policyVersion: string | null;
+  escalation: string | null;
 };
 
 export type CurrentUser = { id: string; email: string | null };

@@ -46,3 +46,12 @@ def test_sensitive_proposals_are_flagged() -> None:
     assert sensitivity("The founder's salary must be covered by June.") == "sensitive"
     assert sensitivity("A diagnosis delayed the launch.") == "sensitive"
     assert sensitivity("Run a paid pilot with three clinics.") == "normal"
+
+
+def test_small_projects_can_still_recall_a_distinctive_fact() -> None:
+    # M7 benchmark case M05: with one remembered fact every word is in "all" items, so plain IDF
+    # never reached the threshold. A word unique to one item now counts as distinctive.
+    lease = mem(1, "fact", "The Accra office lease ends in March.")
+    picked = select_context([lease], None, "The Accra lease was extended; should we hire locally?")
+    assert [c.content for c in picked] == [lease.content]
+    assert select_context([lease], None, "Should we start a podcast?") == []
