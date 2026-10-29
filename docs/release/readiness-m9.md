@@ -19,7 +19,7 @@
 | P0-3 user-visible limitations and copy | **Done.** New hero copy; the workflow strip shows the 5 stages plus a quick-run note; a pilot and "not professional advice" notice with legal and support links is on every page, including login. Unit-tested; rendered and checked at desktop width and 390 px. |
 | P0-6 spend ceilings | **Set:** $2 per user and $15 overall per rolling 24 hours (ADR-011 accepted). The defaults, `render.yaml` and `.env.example` all carry these values. Sign-up policy, Auth rate limits and backups remain to do in staging. |
 | P0-7 incident plan | Owner to be named by Tokmang. |
-| P0-4 CI and staging | Waiting on the GitHub connection and the staging accounts. |
+| P0-4 CI and staging | **CI green on GitHub** (all 4 jobs, runs on `2240a6e` and `9b355fb`, 2026-10-28), including the real-Supabase auth-revocation job and the Docker image build. **Staging up:** `https://echiche-web.onrender.com/api/ready` returns `{"status":"ready"}` (2026-10-29), so the Supabase transaction pooler accepts the custom `echiche_web` role (previously NOT VERIFIED). Remaining: the render-deploy smoke test (sign-in, logout, project, run picked up by the worker, memory, export, delete). |
 | P0-2, P0-5, P0-8 | Unchanged. |
 
 ## 1. Recommendation: **NO-GO today; CONDITIONAL GO** for a small invited pilot once the 8 P0s in §3 are closed
