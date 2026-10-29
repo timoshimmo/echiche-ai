@@ -3,13 +3,11 @@
 import { FormEvent, Fragment, useEffect, useRef, useState } from "react";
 import {
   RUN_ERROR_MESSAGES, RUN_STAGES, SETTLED_STATUSES,
-  type CurrentUser, type Project, type RunStage, type ThoughtRunWithEvents
+  type Project, type RunStage, type ThoughtRunWithEvents
 } from "@/lib/domain/types";
 import { ROUTING_POLICY } from "@/lib/domain/routing";
-import { DecisionBriefView, generationDetail, generationLabel } from "./decision-brief";
-import { Journal } from "./journal";
-import { Logo } from "./ui/primitives";
-import { SiteFooter } from "./site-footer";
+import { DecisionBriefView, generationDetail, generationLabel } from "../decision-brief";
+import { Journal } from "../journal";
 
 const STATUS_LABEL: Record<ThoughtRunWithEvents["status"], string> = {
   queued: "Queued", planning: "Planning", researching: "Researching", critiquing: "Critiquing",
@@ -67,7 +65,6 @@ export default function HomePage() {
   const [run, setRun] = useState<ThoughtRunWithEvents | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
-  const [user, setUser] = useState<CurrentUser | null>(null);
   const poll = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   /** fetch wrapper: a 401 means the session ended, so go back to sign-in. */
@@ -80,11 +77,6 @@ export default function HomePage() {
     return { response, body: await response.json() };
   }
 
-  async function loadUser() {
-    const { response, body } = await api("/api/me");
-    if (response.ok) setUser(body.data);
-  }
-
   async function loadProjects() {
     const { response, body } = await api("/api/projects");
     if (!response.ok) throw new Error(body.error?.message ?? "Could not load projects");
@@ -92,7 +84,6 @@ export default function HomePage() {
     if (!selectedId && body.data[0]) setSelectedId(body.data[0].id);
   }
   useEffect(() => {
-    loadUser().catch(() => {});
     loadProjects().catch(e => setMessage(e.message));
     return () => { if (poll.current) clearTimeout(poll.current); };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -157,14 +148,7 @@ export default function HomePage() {
   const reason = run?.errorCode ? RUN_ERROR_MESSAGES[run.errorCode] ?? null : null;
 
   return (
-    <main className="shell">
-      <header className="topbar">
-        <Logo variant="tagline" className="topbar-logo" />
-        <div className="mode">
-          <span className="dot" />{user?.email ?? "Signed in"}
-          <form method="post" action="/auth/sign-out"><button type="submit" className="link-button">Sign out</button></form>
-        </div>
-      </header>
+    <div className="page">
       <section className="hero">
         <p className="eyebrow">EARLY PILOT</p>
         <h1>Think beyond the<br /><em>next answer.</em></h1>
@@ -236,7 +220,6 @@ export default function HomePage() {
         setProjects(current => current.filter(p => p.id !== selectedId)); setSelectedId(""); setRun(null);
         setMessage("Project deleted permanently.");
       }} />}
-      <SiteFooter />
-    </main>
+    </div>
   );
 }

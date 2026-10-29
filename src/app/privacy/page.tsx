@@ -1,8 +1,9 @@
 import Link from "next/link";
 import { LEGAL, SUPPORT } from "@/lib/domain/site";
 import { SiteFooter } from "../site-footer";
+import { PublicHeader } from "../ui/public-header";
 
-export const metadata = { title: "Privacy notice · Echiche" };
+export const metadata = { title: "Privacy notice" };
 
 /**
  * Privacy notice (M9 P0-1). Every factual statement here mirrors docs/security/data-lifecycle.md;
@@ -10,9 +11,11 @@ export const metadata = { title: "Privacy notice · Echiche" };
  */
 export default function PrivacyPage() {
   return (
-    <main className="shell legal">
+    <div className="public-page">
+    <PublicHeader />
+    <main className="legal" id="main">
       {LEGAL.status === "draft" && (
-        <div className="notice" role="note">Draft for legal review. Items in [brackets] are still to be confirmed.</div>
+        <div className="notice notice-warning" role="note">Draft for legal review. Items in [brackets] are still to be confirmed.</div>
       )}
       <h1>Privacy notice</h1>
       <p className="legal-meta">Last updated {LEGAL.lastUpdated}</p>
@@ -91,7 +94,8 @@ export default function PrivacyPage() {
       <p>We will tell you in the app before material changes take effect.</p>
 
       <p><Link href="/">Back to Echiche</Link> · <Link href="/terms">Terms</Link></p>
-      <SiteFooter />
     </main>
+    <SiteFooter />
+    </div>
   );
 }

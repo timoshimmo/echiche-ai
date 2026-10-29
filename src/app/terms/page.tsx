@@ -1,15 +1,18 @@
 import Link from "next/link";
 import { LEGAL, SUPPORT } from "@/lib/domain/site";
 import { SiteFooter } from "../site-footer";
+import { PublicHeader } from "../ui/public-header";
 
-export const metadata = { title: "Terms · Echiche" };
+export const metadata = { title: "Terms" };
 
 /** Pilot terms of use (M9 P0-1). Items in [brackets] must be confirmed before LEGAL.status becomes "final". */
 export default function TermsPage() {
   return (
-    <main className="shell legal">
+    <div className="public-page">
+    <PublicHeader />
+    <main className="legal" id="main">
       {LEGAL.status === "draft" && (
-        <div className="notice" role="note">Draft for legal review. Items in [brackets] are still to be confirmed.</div>
+        <div className="notice notice-warning" role="note">Draft for legal review. Items in [brackets] are still to be confirmed.</div>
       )}
       <h1>Terms of use (pilot)</h1>
       <p className="legal-meta">Last updated {LEGAL.lastUpdated}</p>
@@ -60,7 +63,8 @@ export default function TermsPage() {
       </p>
 
       <p><Link href="/">Back to Echiche</Link> · <Link href="/privacy">Privacy notice</Link></p>
-      <SiteFooter />
     </main>
+    <SiteFooter />
+    </div>
   );
 }
