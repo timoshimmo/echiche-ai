@@ -3,8 +3,8 @@ import type { NextConfig } from "next";
 /**
  * Browser security headers on every response (M8 security review, finding F3).
  * - frame-ancestors / X-Frame-Options: nobody may frame the app (clickjacking on "Delete project").
- * - CSP: scripts, styles, fonts and requests come from this origin, plus Google Fonts for the
- *   typefaces. Next.js's App Router bootstraps with inline scripts, so script-src needs
+ * - CSP: scripts, styles, fonts, images and requests come from this origin only. The brand
+ *   typefaces are self-hosted (UI phase, Stage 2), so no third-party font origin. Next.js's App Router bootstraps with inline scripts, so script-src needs
  *   'unsafe-inline' (no nonce pipeline yet); React's output escaping remains the XSS defence, and
  *   the CSP still blocks loading scripts from anywhere else, plugins, <base> hijacking and
  *   off-origin form posts. Development also needs 'unsafe-eval' for fast refresh.
@@ -15,8 +15,8 @@ export function securityHeaders(env: string | undefined = process.env.NODE_ENV):
   const csp = [
     "default-src 'self'",
     `script-src 'self' 'unsafe-inline'${production ? "" : " 'unsafe-eval'"}`,
-    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-    "font-src 'self' https://fonts.gstatic.com",
+    "style-src 'self' 'unsafe-inline'",
+    "font-src 'self'",
     "img-src 'self' data:",
     "connect-src 'self'",
     "frame-ancestors 'none'",

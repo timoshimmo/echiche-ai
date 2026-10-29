@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="1 1 63 58.5" width="63" height="58.5" role="img" aria-label="Echiche">
+  <title>Echiche</title>
+  <g id="symbol">
+    <defs><clipPath id="echiche-holes-7"><path clip-rule="evenodd" d="M-8 -8H72V72H-8ZM34.00 9.5a4.50 4.50 0 1 0 9.00 0a4.50 4.50 0 1 0 -9.00 0ZM5.00 38.5a4.50 4.50 0 1 0 9.00 0a4.50 4.50 0 1 0 -9.00 0ZM50.50 43a4.50 4.50 0 1 0 9.00 0a4.50 4.50 0 1 0 -9.00 0Z"/></clipPath></defs>
+    <g clip-path="url(#echiche-holes-7)">
+      <path id="line" d="M9.5 38.5C12.5 25 24 13.5 38.5 9.5M9.5 38.5C15 31 22.5 27.8 29.5 28.6C38 29.8 46 37.5 55 43M38.5 9.5C31.5 17 29 27 31.5 36.5C33.5 43 40 46 55 43" fill="none" stroke="#FAF9F4" stroke-width="5.0" stroke-linecap="round" stroke-linejoin="round"/>
+      <circle id="evidence" cx="38.5" cy="9.5" r="7.0" fill="none" stroke="#D7FF5C" stroke-width="5.0"/>
+      <circle id="idea" cx="9.5" cy="38.5" r="7.0" fill="none" stroke="#7B9B81" stroke-width="5.0"/>
+      <circle id="decision" cx="55" cy="43" r="7.0" fill="none" stroke="#D7FF5C" stroke-width="5.0"/>
+    </g>
+  </g>
+</svg>

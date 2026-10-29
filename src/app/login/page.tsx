@@ -1,3 +1,4 @@
+import { Logo } from "../ui/primitives";
 import { SiteFooter } from "../site-footer";
 
 export const dynamic = "force-dynamic";
@@ -18,8 +19,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
   return (
     <main className="shell">
       <header className="topbar">
-        <div className="brand-mark">E</div>
-        <div><div className="brand">echiche</div><div className="tagline">Deep thought, with continuity.</div></div>
+        <Logo variant="tagline" className="topbar-logo" />
       </header>
       <section className="hero">
         <p className="eyebrow">SIGN IN</p>

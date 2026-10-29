@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="3.5 4 58 54" width="58" height="54" role="img" aria-label="One line connecting an idea, evidence and a decision">
+  <title>One line connecting an idea, evidence and a decision</title>
+  <path d="M9.5 38.5C12.5 25 24 13.5 38.5 9.5C31.5 17 29 27 31.5 36.5C33.5 43 34.5 48.5 30 52C25.5 55.5 15.5 55.5 11.5 50C8.6 46 8.4 42 9.5 38.5C15 31 22.5 27.8 29.5 28.6C38 29.8 46 37.5 55 43C48 47 40 47 33.1 43.8" fill="none" stroke="#0F202A" stroke-width="0.55" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="38.5" cy="9.5" r="3.1" fill="#D7FF5C"/>
+  <circle cx="38.5" cy="9.5" r="1.15" fill="#0F202A"/>
+  <circle cx="9.5" cy="38.5" r="3.1" fill="#D9E4D6"/>
+  <circle cx="9.5" cy="38.5" r="1.15" fill="#0F202A"/>
+  <circle cx="55" cy="43" r="3.1" fill="#D7FF5C"/>
+  <circle cx="55" cy="43" r="1.15" fill="#0F202A"/>
+</svg>

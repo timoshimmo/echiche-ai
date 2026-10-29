@@ -10,8 +10,8 @@ import TermsPage from "./terms/page";
 describe("privacy notice, terms and support contact", () => {
   it("are public: the page-protection middleware does not cover them", () => {
     const matcher = new RegExp(`^${config.matcher[0]}$`);
-    for (const path of ["/privacy", "/terms", "/login"]) expect(matcher.test(path)).toBe(false);
-    for (const path of ["/", "/projects"]) expect(matcher.test(path)).toBe(true);
+    for (const path of ["/privacy", "/terms", "/login", "/brand/echiche-logo-colour.svg", "/icon.svg", "/apple-icon.png"]) expect(matcher.test(path)).toBe(false);
+    for (const path of ["/", "/projects", "/projects/abc/runs/def"]) expect(matcher.test(path)).toBe(true);
   });
 
   it("name the processors, the rights and the support contact", () => {

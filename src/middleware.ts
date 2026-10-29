@@ -41,5 +41,7 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   runtime: "nodejs",
-  matcher: ["/((?!api/|auth/|login|privacy|terms|_next/static|_next/image|favicon.ico).*)"]
+  // Public: API (own auth), auth callbacks, sign-in, legal pages, build output and brand assets (the
+  // sign-in page shows the logo before anyone is signed in; these files are public brand material).
+  matcher: ["/((?!api/|auth/|login|privacy|terms|_next/static|_next/image|favicon.ico|icon.svg|apple-icon.png|brand/).*)"]
 };

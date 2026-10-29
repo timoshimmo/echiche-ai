@@ -8,6 +8,7 @@ import {
 import { ROUTING_POLICY } from "@/lib/domain/routing";
 import { DecisionBriefView, generationDetail, generationLabel } from "./decision-brief";
 import { Journal } from "./journal";
+import { Logo } from "./ui/primitives";
 import { SiteFooter } from "./site-footer";
 
 const STATUS_LABEL: Record<ThoughtRunWithEvents["status"], string> = {
@@ -158,8 +159,7 @@ export default function HomePage() {
   return (
     <main className="shell">
       <header className="topbar">
-        <div className="brand-mark">E</div>
-        <div><div className="brand">echiche</div><div className="tagline">Deep thought, with continuity.</div></div>
+        <Logo variant="tagline" className="topbar-logo" />
         <div className="mode">
           <span className="dot" />{user?.email ?? "Signed in"}
           <form method="post" action="/auth/sign-out"><button type="submit" className="link-button">Sign out</button></form>

@@ -25,6 +25,14 @@ describe("browser security headers (M8 F3)", () => {
     expect(csp).toMatch(/upgrade-insecure-requests/);
   });
 
+  it("load fonts, styles and images from this origin only (self-hosted brand fonts, no Google Fonts)", () => {
+    const csp = header("production", "Content-Security-Policy")!;
+    expect(csp).toMatch(/font-src 'self'(;|$)/);
+    expect(csp).toMatch(/style-src 'self' 'unsafe-inline'(;|$)/);
+    expect(csp).toMatch(/img-src 'self' data:(;|$)/);
+    expect(csp).not.toMatch(/googleapis|gstatic/);
+  });
+
   it("send HSTS only in production and allow eval only in development (fast refresh)", () => {
     expect(header("production", "Strict-Transport-Security")).toMatch(/max-age=\d{8}/);
     expect(header("development", "Strict-Transport-Security")).toBeUndefined();
