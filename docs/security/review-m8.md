@@ -59,7 +59,7 @@ Evidence is labelled throughout:
 
 ### F3: browser security headers
 - **Remediation:** `next.config.ts` sets on every path:
-  - a CSP: `default-src 'self'`; scripts from self plus inline; styles and fonts from self plus Google Fonts; `connect-src 'self'`; `frame-ancestors 'none'`; `form-action 'self'`; `base-uri 'none'`; `object-src 'none'`; `upgrade-insecure-requests` in production;
+  - a CSP: `default-src 'self'`; scripts from self plus inline; styles and fonts from self (Google Fonts removed in UI Stage 2); `connect-src 'self'`; `frame-ancestors 'none'`; `form-action 'self'`; `base-uri 'none'`; `object-src 'none'`; `upgrade-insecure-requests` in production;
   - `X-Frame-Options: DENY`, `nosniff`, `Referrer-Policy`, `Permissions-Policy` and COOP;
   - HSTS (2 years) in production.
 - **Zod and the CSP:** Zod's eval probe triggered a CSP report in the browser, so Zod is set to jitless (`src/lib/domain/zod-setup.ts`).
@@ -102,7 +102,7 @@ Evidence is labelled throughout:
 Nothing in this review blocks a **private, invite-only** pilot once the manual steps below are done. Before **open sign-up**:
 1. **Set the spend ceilings deliberately** (F1 defaults: $5 per user and $50 globally per rolling day), and decide whether sign-up stays open. An open sign-up plus a global ceiling means one abuser can exhaust the day's budget for everyone: the ceiling bounds cost, not availability.
 2. **Verify Supabase Auth's hosted rate limits and sign-up policy** (F12) in the dashboard.
-3. **Decide on Google Fonts** (F10): self-host the font files (the recommendation for an EU service), or name Google in the privacy notice.
+3. ~~**Decide on Google Fonts** (F10)~~ Done: fonts are self-hosted (UI Stage 2).
 4. **Commission an independent security review.** This one was performed by the code's author.
 
 ## Residual risk
