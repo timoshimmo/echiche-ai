@@ -5,7 +5,7 @@ import { Logo } from "./primitives";
 export function PublicHeader() {
   return (
     <header className="public-header">
-      <Link href="/" className="logo" aria-label="Echiche home"><Logo variant="tagline" className="topbar-logo" /></Link>
+      <Link href="/" prefetch={false} className="logo" aria-label="Echiche home"><Logo variant="tagline" className="topbar-logo" /></Link>
     </header>
   );
 }

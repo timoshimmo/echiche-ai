@@ -106,8 +106,8 @@ export function Tabs({ tabs, selected, onSelect, label, idPrefix }:
  * Modal confirmation on the native <dialog> (focus trap, Esc to cancel, inert page behind).
  * Used for irreversible actions; the confirm button names the action, never just "OK".
  */
-export function ConfirmDialog({ open, title, children, confirmLabel, danger = false, busy = false, onConfirm, onCancel }:
-  { open: boolean; title: string; children: ReactNode; confirmLabel: string; danger?: boolean; busy?: boolean;
+export function ConfirmDialog({ open, title, children, confirmLabel, cancelLabel = "Cancel", danger = false, busy = false, onConfirm, onCancel }:
+  { open: boolean; title: string; children: ReactNode; confirmLabel: string; cancelLabel?: string; danger?: boolean; busy?: boolean;
     onConfirm: () => void; onCancel: () => void }) {
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
@@ -124,7 +124,7 @@ export function ConfirmDialog({ open, title, children, confirmLabel, danger = fa
         <div>{children}</div>
       </div>
       <div className="dialog-actions">
-        <button type="button" className="btn btn-secondary" onClick={onCancel} disabled={busy} autoFocus>Cancel</button>
+        <button type="button" className="btn btn-secondary" onClick={onCancel} disabled={busy} autoFocus>{cancelLabel}</button>
         <button type="button" className={`btn ${danger ? "btn-danger" : "btn-primary"}`} onClick={onConfirm} disabled={busy}>
           {busy && <span className="spinner" aria-hidden="true" />}{confirmLabel}
         </button>

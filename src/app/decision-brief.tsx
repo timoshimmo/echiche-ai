@@ -1,5 +1,11 @@
 // Presentational only; types-only imports keep zod and server code out of the client bundle.
-import type { DecisionBrief, EvidenceClaim, EvidenceSource, GenerationSummary, RememberedContext, RunEvidence } from "@/lib/domain/types";
+// The brief is laid out as a decision document: recommendation first, then the reasoning to inspect it.
+import Link from "next/link";
+import type {
+  DecisionBrief, EvidenceClaim, EvidenceSource, GenerationSummary, ReasoningResult, RememberedContext, RunEvidence
+} from "@/lib/domain/types";
+import { formatDate } from "./lib/run-display";
+import { Badge } from "./ui/primitives";
 
 const PROVIDER_NAMES: Record<string, string> = { openai: "OpenAI" };
 const LABELS: Record<string, string> = {
@@ -19,12 +25,26 @@ export function generationDetail(g: GenerationSummary): string | null {
   return `${g.calls} model call${g.calls === 1 ? "" : "s"}${repairs} · ${g.inputTokens.toLocaleString()} in / ${g.outputTokens.toLocaleString()} out tokens · $${g.costUsd.toFixed(4)} · prompts ${g.prompts.join(", ")}`;
 }
 
-function List({ items }: { items: string[] }) {
-  return items.length ? <ul className="brief-list">{items.map((item, i) => <li key={i}>{item}</li>)}</ul> : <p className="brief-empty">None stated.</p>;
+const anchor = (sourceId: string) => `source-${sourceId.replace(/[^A-Za-z0-9_-]/g, "")}`;
+
+function Label({ label }: { label: string }) {
+  return <span className={`label-tag label-${label}`}>{LABELS[label] ?? label}</span>;
 }
 
-const VERDICT: Record<string, string> = {
-  supported: "supported", partially_supported: "partly supported", not_supported: "not supported", quote_not_found: "quote not found"
+function None() { return <p className="muted">None stated.</p>; }
+
+function SourceRefs({ ids, known }: { ids: string[]; known: Set<string> }) {
+  if (!ids.length) return null;
+  return <span className="source-refs">{ids.map(id => known.has(id)
+    ? <a key={id} href={`#${anchor(id)}`} className="source-chip" aria-label={`Source ${id}`}>{id}</a>
+    : <span key={id} className="source-chip muted" title="Not among the sources read for this run">{id}</span>)}</span>;
+}
+
+const VERDICT: Record<string, { label: string; tone: "success" | "warning" | "danger" }> = {
+  supported: { label: "Supported by this quote", tone: "success" },
+  partially_supported: { label: "Partly supported", tone: "warning" },
+  not_supported: { label: "Not supported", tone: "danger" },
+  quote_not_found: { label: "Quote not found", tone: "danger" }
 };
 
 /** Only https URLs reach this point (validated server-side); links never pass a referrer or ranking signal. */
@@ -32,106 +52,190 @@ function SourceItem({ source, claims, cited }: { source: EvidenceSource; claims:
   const quotes = claims.flatMap(c =>
     c.links.filter(l => l.sourceId === source.sourceId && (l.verdict === "supported" || l.verdict === "partially_supported"))
       .map(l => ({ claim: c, link: l })));
-  const meta = [source.publisher ?? source.domain, source.publishedAt ? `published ${source.publishedAt.slice(0, 10)}` : "date unknown",
-    `read ${source.retrievedAt.slice(0, 10)}`].join(" · ");
   return (
-    <li className="source-item">
-      <span className="source-id">{source.sourceId}</span>
-      <div>
-        <a href={source.url} target="_blank" rel="noopener noreferrer nofollow">{source.title}</a>
-        <small>{meta}</small>
-        {cited && <p className="source-cited">Cited for: {cited}</p>}
+    <li className="source-item" id={anchor(source.sourceId)}>
+      <span className="source-id" aria-hidden="true">{source.sourceId}</span>
+      <div className="source-body">
+        <a href={source.url} target="_blank" rel="noopener noreferrer nofollow" className="source-title">
+          {source.title}<span className="visually-hidden"> (opens in a new tab)</span>
+        </a>
+        <p className="source-meta">
+          <span>{source.publisher ?? source.domain}</span>
+          <span>{source.publishedAt ? `Published ${formatDate(source.publishedAt.slice(0, 10))}` : "Publication date unknown"}</span>
+          <span>Read {formatDate(source.retrievedAt)}</span>
+        </p>
+        {cited && <p className="source-cited"><strong>Cited for:</strong> {cited}</p>}
         {quotes.map(({ claim, link }) =>
-          <blockquote key={`${claim.claimId}-${link.passageId}`}>
-            “{link.quote}”
-            <small>{link.relation === "contradicts" ? "Contradicts" : "Supports"} {claim.claimId}: {claim.text} · {VERDICT[link.verdict]}
-              {claim.freshness === "stale" ? " · stale source" : ""}{claim.contradicted ? " · sources disagree on this claim" : ""}</small>
-          </blockquote>)}
+          <figure key={`${claim.claimId}-${link.passageId}`} className="quote">
+            <blockquote>&ldquo;{link.quote}&rdquo;</blockquote>
+            <figcaption>
+              <span className="quote-claim">{link.relation === "contradicts" ? "Contradicts" : "Supports"} claim {claim.claimId}: {claim.text}</span>
+              <span className="row">
+                <Badge tone={VERDICT[link.verdict].tone}>{VERDICT[link.verdict].label}</Badge>
+                {claim.freshness === "stale" && <Badge tone="warning">Stale source</Badge>}
+                {claim.contradicted && <Badge tone="warning">Sources disagree</Badge>}
+              </span>
+            </figcaption>
+          </figure>)}
       </div>
     </li>
   );
 }
 
-function EvidenceView({ brief, evidence }: { brief: DecisionBrief; evidence: RunEvidence }) {
+function EvidenceSection({ brief, evidence }: { brief: DecisionBrief; evidence: RunEvidence }) {
   const cited = new Map(brief.citations.map(c => [c.source_id, c.supports]));
   const citedSources = evidence.sources.filter(s => cited.has(s.sourceId));
   const otherSources = evidence.sources.filter(s => !cited.has(s.sourceId));
   const rejected = evidence.claims.filter(c => c.status === "unsupported" || c.status === "invalid");
   const verified = evidence.claims.filter(c => c.status === "verified" || c.status === "partial");
   return (
-    <div className="caveat sources">
-      <strong>Sources ({evidence.sources.length} read · {verified.length} claim{verified.length === 1 ? "" : "s"} verified against them)</strong>
-      {citedSources.length > 0 && <ol className="source-list">{citedSources.map(s =>
-        <SourceItem key={s.sourceId} source={s} claims={evidence.claims} cited={cited.get(s.sourceId)} />)}</ol>}
-      {otherSources.length > 0 && <details><summary>Read but not cited ({otherSources.length})</summary>
-        <ol className="source-list">{otherSources.map(s =>
-          <SourceItem key={s.sourceId} source={s} claims={evidence.claims} cited={undefined} />)}</ol></details>}
-      {rejected.length > 0 && <details><summary>Claims that failed verification ({rejected.length})</summary>
-        <List items={rejected.map(c => `${c.claimId}: ${c.text} (${c.status === "invalid" ? "quote not found in the source" : "not supported by the source"})`)} /></details>}
-    </div>
+    <section className="brief-section" id="brief-sources" aria-labelledby="sources-title">
+      <h2 id="sources-title">Sources and verification</h2>
+      <div className="verify-summary">
+        <div><strong>{evidence.sources.length}</strong><span>source{evidence.sources.length === 1 ? "" : "s"} read</span></div>
+        <div><strong>{verified.length}</strong><span>claim{verified.length === 1 ? "" : "s"} checked against a quote</span></div>
+        <div><strong>{rejected.length}</strong><span>claim{rejected.length === 1 ? "" : "s"} failed the check</span></div>
+      </div>
+      <p className="muted">Each verified claim is matched to a quote copied from the source. Open the source to read it in context.</p>
+      {citedSources.length > 0
+        ? <ol className="source-list">{citedSources.map(s => <SourceItem key={s.sourceId} source={s} claims={evidence.claims} cited={cited.get(s.sourceId)} />)}</ol>
+        : <p className="muted">The brief does not cite any of the sources it read.</p>}
+      {otherSources.length > 0 && <details className="disclosure">
+        <summary>Read but not cited ({otherSources.length})</summary>
+        <ol className="source-list">{otherSources.map(s => <SourceItem key={s.sourceId} source={s} claims={evidence.claims} cited={undefined} />)}</ol>
+      </details>}
+      {rejected.length > 0 && <details className="disclosure">
+        <summary>Claims that failed verification ({rejected.length})</summary>
+        <ul className="plain-list">{rejected.map(c =>
+          <li key={c.claimId}><Badge tone="danger">{c.status === "invalid" ? "Quote not in source" : "Not supported"}</Badge> <span>{c.claimId}: {c.text}</span></li>)}</ul>
+      </details>}
+    </section>
   );
 }
 
-function RememberedView({ items }: { items: RememberedContext[] }) {
+const SECTIONS: [string, string][] = [
+  ["brief-decision", "The decision"], ["brief-assumptions", "Key assumptions"], ["brief-evidence", "Evidence"],
+  ["brief-alternatives", "Alternatives"], ["brief-tradeoffs", "Trade-offs"], ["brief-change", "What would change it"],
+  ["brief-next", "Next steps"], ["brief-limits", "Limitations"]
+];
+
+export function DecisionBriefView({ brief, evidence, remembered, projectId }:
+  { brief: DecisionBrief; evidence?: RunEvidence; remembered?: RememberedContext[]; projectId?: string }) {
+  const known = new Set((evidence?.sources ?? []).map(s => s.sourceId));
+  const hasSources = !!evidence && evidence.sources.length > 0;
+  const contents = [...SECTIONS, ...(hasSources ? [["brief-sources", "Sources"] as [string, string]] : [])];
   return (
-    <details className="caveat remembered">
-      <summary><strong>Remembered items this run was given ({items.length})</strong></summary>
-      <ul className="brief-list">{items.map(i =>
-        <li key={i.ref}><b>{i.ref}</b> {i.kind.replace("_", " ")} (recorded {i.observedAt.slice(0, 10)}): {i.content}</li>)}</ul>
-    </details>
+    <article className="brief-doc" aria-labelledby="brief-title">
+      <aside className="brief-toc" aria-label="On this brief">
+        <p className="eyebrow">On this brief</p>
+        <ol>{contents.map(([id, label]) => <li key={id}><a href={`#${id}`}>{label}</a></li>)}</ol>
+      </aside>
+
+      <div className="brief-main">
+        <header className="brief-recommendation">
+          <div className="row">
+            <p className="eyebrow">Recommendation</p>
+            <Badge tone={brief.confidence.level === "high" ? "success" : brief.confidence.level === "medium" ? "neutral" : "warning"}>
+              Confidence: {brief.confidence.level}
+            </Badge>
+          </div>
+          <h2 id="brief-title" className="display">{brief.recommendation.summary}</h2>
+          <p className="brief-rationale">{brief.recommendation.rationale}</p>
+          <div className="brief-confidence"><strong>Why this confidence</strong><p>{brief.confidence.explanation}</p></div>
+        </header>
+
+        <section className="brief-section" id="brief-decision" aria-labelledby="decision-title">
+          <h2 id="decision-title">The decision</h2>
+          <p className="brief-question">{brief.decision_question}</p>
+          <p><strong>Scope:</strong> {brief.scope}</p>
+        </section>
+
+        <section className="brief-section" id="brief-assumptions" aria-labelledby="assumptions-title">
+          <h2 id="assumptions-title">Key assumptions</h2>
+          {brief.key_assumptions.length ? <ul className="point-list">{brief.key_assumptions.map((a, i) =>
+            <li key={i}><span className="row"><Label label={a.label} /><span className="memory-meta">Confidence {a.confidence}</span></span><p>{a.statement}</p></li>)}</ul> : <None />}
+        </section>
+
+        <section className="brief-section" id="brief-evidence" aria-labelledby="evidence-title">
+          <h2 id="evidence-title">Evidence</h2>
+          <p className="muted small">Labels are the model&rsquo;s own assessment of each point. Only points linked to a source have been checked, under Sources and verification.</p>
+          <div className="evidence-columns">
+            <div>
+              <h3 className="subhead">For the recommendation</h3>
+              {brief.supporting_evidence.length ? <ul className="point-list">{brief.supporting_evidence.map((e, i) =>
+                <li key={i}><span className="row"><Label label={e.label} /><SourceRefs ids={e.source_ids} known={known} /></span><p>{e.point}</p></li>)}</ul> : <None />}
+            </div>
+            <div>
+              <h3 className="subhead">Against it</h3>
+              {brief.counterevidence.length ? <ul className="point-list">{brief.counterevidence.map((e, i) =>
+                <li key={i}><span className="row"><Label label={e.label} /><SourceRefs ids={e.source_ids} known={known} /></span><p>{e.point}</p></li>)}</ul> : <None />}
+            </div>
+          </div>
+          <div className="callout callout-objection"><strong>Strongest objection</strong><p>{brief.strongest_objection}</p></div>
+        </section>
+
+        <section className="brief-section" id="brief-alternatives" aria-labelledby="alternatives-title">
+          <h2 id="alternatives-title">Alternatives considered</h2>
+          <dl className="term-list">{brief.alternatives.map((a, i) => <div key={i}><dt>{a.option}</dt><dd>Why not now: {a.why_not_now}</dd></div>)}</dl>
+        </section>
+
+        <section className="brief-section" id="brief-tradeoffs" aria-labelledby="tradeoffs-title">
+          <h2 id="tradeoffs-title">Criteria and trade-offs</h2>
+          <dl className="term-list">{brief.criteria_and_tradeoffs.map((c, i) => <div key={i}><dt>{c.criterion}</dt><dd>{c.tradeoff}</dd></div>)}</dl>
+        </section>
+
+        <section className="brief-section" id="brief-change" aria-labelledby="change-title">
+          <h2 id="change-title">What would change this recommendation</h2>
+          <ul className="check-list">{brief.what_would_change.map((w, i) => <li key={i}>{w}</li>)}</ul>
+        </section>
+
+        <section className="brief-section" id="brief-next" aria-labelledby="next-title">
+          <h2 id="next-title">Recommended next steps</h2>
+          <ol className="next-list">{brief.next_actions.map((a, i) =>
+            <li key={i}><p className="next-action">{a.action}</p><p className="muted">Success looks like: {a.success_signal}</p>
+              {a.reversible && <Badge tone="success">Reversible</Badge>}</li>)}</ol>
+        </section>
+
+        <section className="brief-section" id="brief-limits" aria-labelledby="limits-title">
+          <h2 id="limits-title">Limitations</h2>
+          <ul className="plain-list">{(brief.limitations.length ? brief.limitations : ["None stated by the model; treat this as unverified analysis."]).map((l, i) => <li key={i}>{l}</li>)}</ul>
+          {brief.citations.length === 0 && <p className="muted">No sources are cited in this brief.</p>}
+        </section>
+
+        {brief.proposed_memory_updates.length > 0 && (
+          <section className="brief-section" aria-labelledby="proposed-title">
+            <h2 id="proposed-title">Proposed for project memory</h2>
+            <p className="muted">Not saved until you approve them{projectId ? <> in <Link href={`/projects/${projectId}?tab=memory`}>Memory</Link></> : " in Memory"}.</p>
+            <ul className="plain-list">{brief.proposed_memory_updates.map((m, i) => <li key={i}><span className="label-tag label-hypothesis">{m.kind.replace("_", " ")}</span> {m.statement}</li>)}</ul>
+          </section>
+        )}
+
+        {hasSources && <EvidenceSection brief={brief} evidence={evidence!} />}
+
+        {remembered && remembered.length > 0 && (
+          <details className="disclosure brief-remembered">
+            <summary>Project memory this run was given ({remembered.length})</summary>
+            <ul className="plain-list">{remembered.map(i =>
+              <li key={i.ref}><b className="mono">{i.ref}</b> <span className="label-tag">{i.kind.replace("_", " ")}</span> {i.content} <span className="memory-meta">(recorded {formatDate(i.observedAt)})</span></li>)}</ul>
+          </details>
+        )}
+      </div>
+    </article>
   );
 }
 
-export function DecisionBriefView({ brief, evidence, remembered }: { brief: DecisionBrief; evidence?: RunEvidence; remembered?: RememberedContext[] }) {
+/** The deterministic demo output: a fixed template, labelled as such, never presented as a brief. */
+export function ScaffoldView({ result }: { result: ReasoningResult }) {
   return (
-    <div className="brief">
-      <article className="stage-card brief-wide">
-        <span className="stage-number">RECOMMENDATION · confidence {brief.confidence.level}</span>
-        <h3>{brief.recommendation.summary}</h3>
-        <p>{brief.recommendation.rationale}</p>
-        <p className="brief-meta">{brief.confidence.explanation}</p>
-      </article>
-      <div className="stage-grid">
-        <article className="stage-card"><span className="stage-number">SCOPE</span><p>{brief.scope}</p></article>
-        <article className="stage-card"><span className="stage-number">STRONGEST OBJECTION</span><p>{brief.strongest_objection}</p></article>
-        <article className="stage-card">
-          <span className="stage-number">WHAT WOULD CHANGE THIS</span>
-          <List items={brief.what_would_change} />
-        </article>
-        <article className="stage-card">
-          <span className="stage-number">CRITERIA &amp; TRADE-OFFS</span>
-          <List items={brief.criteria_and_tradeoffs.map(c => `${c.criterion}: ${c.tradeoff}`)} />
-        </article>
-        <article className="stage-card">
-          <span className="stage-number">KEY ASSUMPTIONS</span>
-          <List items={brief.key_assumptions.map(a => `${LABELS[a.label]} (${a.confidence}): ${a.statement}`)} />
-        </article>
-        <article className="stage-card">
-          <span className="stage-number">ALTERNATIVES</span>
-          <List items={brief.alternatives.map(a => `${a.option}: ${a.why_not_now}`)} />
-        </article>
-        <article className="stage-card">
-          <span className="stage-number">SUPPORTING</span>
-          <List items={brief.supporting_evidence.map(e => `${LABELS[e.label]}: ${e.point}`)} />
-        </article>
-        <article className="stage-card">
-          <span className="stage-number">AGAINST</span>
-          <List items={brief.counterevidence.map(e => `${LABELS[e.label]}: ${e.point}`)} />
-        </article>
-        <article className="stage-card">
-          <span className="stage-number">NEXT ACTIONS</span>
-          <List items={brief.next_actions.map(a => `${a.action} — success: ${a.success_signal}${a.reversible ? " (reversible)" : ""}`)} />
-        </article>
-      </div>
-      {brief.proposed_memory_updates.length > 0 &&
-        <div className="caveat"><strong>Proposed for project memory (not saved until you approve them in Memory and decisions)</strong>
-          <List items={brief.proposed_memory_updates.map(m => `${m.kind.replace("_", " ")}: ${m.statement}`)} /></div>}
-      <div className="caveat"><strong>Limitations</strong>
-        <List items={brief.limitations.length ? brief.limitations : ["None stated by the model; treat this as unverified analysis."]} />
-        {brief.citations.length === 0 && <p>No sources are cited in this brief.</p>}
-      </div>
-      {evidence && evidence.sources.length > 0 && <EvidenceView brief={brief} evidence={evidence} />}
-      {remembered && remembered.length > 0 && <RememberedView items={remembered} />}
-    </div>
+    <section className="scaffold" aria-labelledby="scaffold-title">
+      <div className="notice notice-warning" role="note"><div className="notice-body">
+        <strong>Starter structure, not a decision brief.</strong> This deployment has no AI model configured, so Echiche produced a fixed
+        template showing how to think the question through. It has not analysed your situation or researched anything.
+      </div></div>
+      <h2 id="scaffold-title" className="card-title">{result.summary}</h2>
+      <ol className="scaffold-steps">{result.stages.map(stage =>
+        <li key={stage.stage} className="card"><h3>{stage.title}</h3><p>{stage.content}</p></li>)}</ol>
+      <p className="muted small"><strong>Limitation:</strong> {result.caveat}</p>
+    </section>
   );
 }
