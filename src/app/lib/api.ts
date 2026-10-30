@@ -7,13 +7,15 @@ export class ApiError extends Error {
 
 export async function api<T>(path: string, init?: { method?: string; body?: unknown; headers?: Record<string, string> }): Promise<T> {
   const hasBody = init?.body !== undefined;
+  // FormData (file uploads) is sent as multipart: the browser sets the boundary and the size.
+  const isForm = typeof FormData !== "undefined" && init?.body instanceof FormData;
   let response: Response;
   try {
     response = await fetch(path, {
       method: init?.method ?? "GET",
       cache: "no-store",
-      headers: { ...(hasBody ? { "content-type": "application/json" } : {}), ...init?.headers },
-      body: hasBody ? JSON.stringify(init!.body) : undefined
+      headers: { ...(hasBody && !isForm ? { "content-type": "application/json" } : {}), ...init?.headers },
+      body: !hasBody ? undefined : isForm ? (init!.body as FormData) : JSON.stringify(init!.body)
     });
   } catch {
     throw new ApiError("Echiche couldn't be reached. Check your connection and try again.", 0, "NETWORK");

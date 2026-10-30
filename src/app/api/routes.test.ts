@@ -399,3 +399,82 @@ describe("routing (M7)", () => {
     expect(bad.status).toBe(400);
   });
 });
+
+describe("attachments on a question (ADR-012)", () => {
+  /** A multipart request the way the browser sends it (FormData sets the boundary; the size is declared). */
+  async function upload(fields: { prompt?: string; depth?: string; files?: [string, BlobPart][]; links?: string[] }, headers: Record<string, string> = {}) {
+    const form = new FormData();
+    if (fields.prompt !== undefined) form.set("prompt", fields.prompt);
+    if (fields.depth) form.set("depth", fields.depth);
+    for (const [name, content] of fields.files ?? []) form.append("files", new Blob([content]), name);
+    for (const link of fields.links ?? []) form.append("links", link);
+    const body = new Response(form);
+    const bytes = new Uint8Array(await body.arrayBuffer());
+    return new Request(`${ORIGIN}/`, {
+      method: "POST",
+      headers: { "content-type": body.headers.get("content-type")!, "content-length": String(bytes.length), origin: ORIGIN, ...headers },
+      body: bytes
+    });
+  }
+  async function project() {
+    as(ALICE);
+    return (await (await createProject(req("/", { body: { title: "Attach", problemStatement: "A decision with documents." } }))).json()).data;
+  }
+
+  it("queues a run with files and links, returning names and status but never their content", async () => {
+    const p = await project();
+    const response = await startRun(await upload({
+      prompt: "Should we open the office?", depth: "quick",
+      files: [["budget.csv", "item,cost\nrent,1200\n"], ["SECRET-notes.md", "Confidential runway figure: 14 months"]],
+      links: ["https://example.org/report"]
+    }), params({ projectId: p.id }));
+    expect(response.status).toBe(202);
+    const text = await response.clone().text();
+    expect(text).not.toContain("Confidential runway");
+    const run = (await response.json()).data;
+    expect(run.attachments.map((a: { name: string; kind: string; status: string }) => [a.name, a.kind, a.status])).toEqual([
+      ["budget.csv", "text", "ready"], ["SECRET-notes.md", "text", "ready"], ["example.org/report", "link", "pending"]
+    ]);
+    // A quick run cannot afford the extra input: attachments raise it to at least Standard, with the reason shown.
+    expect(run.route.tier).toBe("medium");
+    expect(run.route.reasons.at(-1)).toMatchObject({ signal: "attachments" });
+    const fetched = await (await getRun(get(), params({ runId: run.id }))).text();
+    expect(fetched).not.toContain("Confidential runway");
+  });
+
+  it("refuses unsupported files, too many attachments and unsafe links with a plain reason", async () => {
+    const p = await project();
+    const bad = await startRun(await upload({ prompt: "A valid question here", files: [["tool.exe", "MZ\u0090\u0000"]] }), params({ projectId: p.id }));
+    expect(bad.status).toBe(400);
+    expect((await bad.json()).error.message).toMatch(/isn't a supported file/);
+    const many = await startRun(await upload({ prompt: "A valid question here", files: Array.from({ length: 6 }, (_, i) => [`f${i}.txt`, "x"] as [string, BlobPart]) }), params({ projectId: p.id }));
+    expect((await many.json()).error.message).toMatch(/at most 5/);
+    const link = await startRun(await upload({ prompt: "A valid question here", links: ["http://169.254.169.254/latest"] }), params({ projectId: p.id }));
+    expect((await link.json()).error.message).toMatch(/https/);
+    const prompt = await startRun(await upload({ prompt: "short", files: [["a.txt", "x"]] }), params({ projectId: p.id }));
+    expect(prompt.status).toBe(400);
+  });
+
+  it("refuses uploads without an Origin, without a declared size, or over the size limit, before reading them", async () => {
+    const p = await project();
+    const noOrigin = await upload({ prompt: "A valid question here", files: [["a.txt", "x"]] });
+    noOrigin.headers.delete("origin");
+    expect((await startRun(noOrigin, params({ projectId: p.id }))).status).toBe(403);
+    const foreign = await upload({ prompt: "A valid question here", files: [["a.txt", "x"]] }, { origin: "https://evil.example" });
+    expect((await startRun(foreign, params({ projectId: p.id }))).status).toBe(403);
+    const huge = await upload({ prompt: "A valid question here", files: [["a.txt", "x"]] }, { "content-length": String(27 * 1024 * 1024) });
+    expect((await startRun(huge, params({ projectId: p.id }))).status).toBe(413);
+    const undeclared = await upload({ prompt: "A valid question here", files: [["a.txt", "x"]] });
+    undeclared.headers.delete("content-length");
+    expect((await startRun(undeclared, params({ projectId: p.id }))).status).toBe(411);
+  });
+
+  it("treats a retry with different attachments as a different request", async () => {
+    const p = await project();
+    const headers = { "idempotency-key": "attach-key-0001" };
+    const first = await startRun(await upload({ prompt: "Same question here", files: [["a.txt", "one"]] }, headers), params({ projectId: p.id }));
+    const replay = await startRun(await upload({ prompt: "Same question here", files: [["a.txt", "one"]] }, headers), params({ projectId: p.id }));
+    const changed = await startRun(await upload({ prompt: "Same question here", files: [["a.txt", "two"]] }, headers), params({ projectId: p.id }));
+    expect([first.status, replay.status, changed.status]).toEqual([202, 200, 409]);
+  });
+});

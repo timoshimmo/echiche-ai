@@ -29,6 +29,7 @@ from threading import Event
 
 from pydantic import ValidationError
 
+from echiche_worker.attachments import apply_reads
 from echiche_worker.compose import MissingStageError, compose_final
 from echiche_worker.contracts import STAGES, Stage, StageOutputV2
 from echiche_worker.log import log
@@ -180,6 +181,7 @@ def _execute(
     load = "planning" not in outputs and route.memory
     memories, decision = store.load_project_memory(run) if load else ([], None)
     run_memory = store.load_run_memory(run.id)
+    attachments = store.load_attachments(run.id)
     for stage in STAGES:
         if stage in outputs:
             continue
@@ -221,6 +223,7 @@ def _execute(
             project_decision=decision,
             run_memory=list(run_memory),
             route=route,
+            attachments=attachments,
         )
         started = time.monotonic()
         try:
@@ -273,10 +276,13 @@ def _execute(
             ctx.research_calls,
             result.memory_context,
             result.escalation,
+            result.attachment_reads,
         )
         outputs[stage] = to_v2(result.output)
         if result.memory_context:
             run_memory = list(result.memory_context)
+        if result.attachment_reads:
+            attachments = apply_reads(attachments, result.attachment_reads)
         log("info", "stage_completed", stage=stage, duration_ms=duration_ms, **fields)
 
     try:

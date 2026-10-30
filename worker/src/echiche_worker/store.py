@@ -19,6 +19,7 @@ import psycopg
 from psycopg.rows import DictRow, dict_row
 from pydantic import BaseModel, ValidationError
 
+from echiche_worker.attachments import Attachment, AttachmentRead
 from echiche_worker.contracts import (
     EVIDENCE_SET_SCHEMA_VERSION,
     STAGE_DATA,
@@ -375,6 +376,42 @@ class RunStore:
             for r in rows
         ]
 
+    def load_attachments(self, run_id: str) -> tuple[Attachment, ...]:
+        """ADR-012: the run's attachments in order. Image bytes are loaded only while still unread."""
+        rows = self.conn.execute(
+            """select id, position, kind, name, status, extracted_text, truncated, note, url, media_type,
+                      case when status = 'pending' then image_data end as image_data
+                 from echiche.run_attachments where run_id = %s order by position""",
+            (run_id,),
+        ).fetchall()
+        return tuple(
+            Attachment(
+                id=str(r["id"]),
+                position=int(r["position"]),
+                kind=str(r["kind"]),
+                name=str(r["name"]),
+                status=str(r["status"]),
+                text=cast(str | None, r["extracted_text"]),
+                truncated=bool(r["truncated"]),
+                note=cast(str | None, r["note"]),
+                url=cast(str | None, r["url"]),
+                media_type=cast(str | None, r["media_type"]),
+                image=bytes(r["image_data"]) if r["image_data"] is not None else None,
+            )
+            for r in rows
+        )
+
+    def _record_attachment_reads(self, run: ClaimedRun, reads: Sequence[AttachmentRead]) -> None:
+        """Keeps what was read (text or a reason it wasn't) and drops the image bytes: no longer needed."""
+        for r in reads:
+            self.conn.execute(
+                """update echiche.run_attachments
+                      set status = %s, extracted_text = %s, truncated = %s, note = %s,
+                          image_data = null, read_at = now()
+                    where id = %s and run_id = %s and status = 'pending'""",
+                (r.status, r.text, r.truncated, r.note, r.id, run.id),
+            )
+
     def _insert_memory_context(self, run: ClaimedRun, items: Sequence[ContextItem]) -> None:
         for i in items:
             self.conn.execute(
@@ -430,6 +467,7 @@ class RunStore:
         research_records: Sequence[ResearchCallRecord] = (),
         memory_context: Sequence[ContextItem] = (),
         escalation: str | None = None,
+        attachment_reads: Sequence[AttachmentRead] = (),
     ) -> Usage:
         """cost_usd must include the cost of `calls` and `research_records`. The checkpoint,
         usage, telemetry, and any sources or claims it carries are written in one transaction."""
@@ -466,6 +504,7 @@ class RunStore:
                 self._insert_calls(run, calls)
                 self._insert_research_calls(run, research_records)
                 self._insert_memory_context(run, memory_context)
+                self._record_attachment_reads(run, attachment_reads)
                 if output.data_schema == EVIDENCE_SET_SCHEMA_VERSION and output.data is not None:
                     self._insert_sources(run, EvidenceSetV1.model_validate(output.data))
                 elif output.data_schema == VERIFICATION_REPORT_SCHEMA_VERSION and output.data is not None:

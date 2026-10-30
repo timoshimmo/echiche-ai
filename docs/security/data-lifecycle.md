@@ -16,6 +16,7 @@ _Status as of M6 (2026-10-28). Items marked **open** need a decision before the 
 | Sources the worker read (URL, title, publisher, dates, hash, ≤3 short passages, the search query that found it) | `echiche.sources` | **Yes**: the query is derived from the user's question; passages are third-party text; deleted with the run |
 | Claims and their quote links, verdicts and notes | `echiche.claims`, `echiche.claim_sources` | Derived from sources and the question; deleted with the run |
 | Research telemetry (search/fetch outcome, status, domain, bytes, cost, latency) | `echiche.research_calls` | No: no query text, no content; deleted with the run |
+| Run attachments (ADR-012): file name, kind, size, hash, link URL, reading status and note, **text extracted** from documents, spreadsheets, PDFs, Word files, images and linked pages; image bytes only until the worker has read them (then cleared). The original file is never stored | `echiche.run_attachments` | **Yes**: the user's own documents; never displayed in the UI (names and status only); included in project export (text, not image bytes); deleted with the run, project or account |
 | Memories (proposed, active, superseded, rejected versions), with provenance | `echiche.memories` | **Yes**: statements about the user's project; proposals are kept only as proposals until reviewed |
 | Decision versions and outcomes | `echiche.decisions`, `echiche.decision_outcomes` | **Yes** |
 | What each run was given from memory (snapshot) | `echiche.run_memory_context` | **Yes**: copies of remembered items; deleted with the run or the memory |
@@ -77,3 +78,8 @@ With `RESEARCH_PROVIDER=brave`, the worker sends search queries written by the m
 - Brave's written confirmation of the permitted use on the chosen plan.
 - The retention period for stored excerpts.
 - A privacy-notice line saying that queries derived from the user's question are sent to Brave.
+
+## Attachments (ADR-012)
+- **Who receives the content.** Extracted text and images go to the model provider (OpenAI) as fenced, untrusted data in the framing, critique and synthesis calls; images also in one reading call. A linked page is fetched by the worker with the research fetcher, so that website sees a request from Echiche's server (user agent `EchicheResearchBot`), not from the user. Brave receives nothing from attachments directly; search queries are written from the decision frame, which may reflect attachment content.
+- **Not logged.** Attachment text never appears in logs, run events or stage checkpoints. Logs record only the number of attachments.
+- **Limits.** 5 attachments per question (at most 3 links and 3 images); files up to 5 MB (images 4 MB); 15,000 characters of text kept per attachment and 30,000 per run; PDFs read up to 60 pages; Office files refused if they inflate beyond 40 MB.

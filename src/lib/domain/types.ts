@@ -82,6 +82,42 @@ export type ThoughtRun = {
   startedAt: string | null;
   updatedAt: string;
   completedAt: string | null;
+  /** Files and links attached to the question: names and reading status only, never their content. */
+  attachments: AttachmentSummary[];
+};
+
+/** ADR-012: what a user can attach to a question. */
+export const ATTACHMENT_KINDS = ["text", "pdf", "word", "spreadsheet", "image", "link"] as const;
+export type AttachmentKind = (typeof ATTACHMENT_KINDS)[number];
+/** ready: text extracted; pending: an image or link the worker reads when the run starts; failed: unreadable (see note). */
+export type AttachmentStatus = "ready" | "pending" | "failed";
+
+export type AttachmentSummary = {
+  id: string;
+  position: number;
+  kind: AttachmentKind;
+  name: string;
+  url: string | null;
+  sizeBytes: number;
+  status: AttachmentStatus;
+  truncated: boolean;
+  note: string | null;
+};
+
+/** An attachment read on the server, ready to store with a new run. Never sent to the browser. */
+export type PreparedAttachment = {
+  position: number;
+  kind: AttachmentKind;
+  name: string;
+  mediaType: string | null;
+  sizeBytes: number;
+  url: string | null;
+  contentSha256: string;
+  status: AttachmentStatus;
+  text: string | null;
+  truncated: boolean;
+  imageData: Buffer | null;
+  note: string | null;
 };
 
 /** GET /api/runs/:id: the run plus its events and research provenance (empty when none). */
@@ -130,6 +166,8 @@ export type UpdateProjectInput = {
 export type StartRunInput = {
   prompt: string;
   depth?: "auto" | "quick" | "standard" | "deep";
+  /** Read on the server before the run is queued (multipart requests only). */
+  attachments?: PreparedAttachment[];
 };
 
 /** How the router sized this run (ADR-010). */

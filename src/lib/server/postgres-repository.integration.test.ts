@@ -228,7 +228,7 @@ describe("end to end across languages (ADR-001 D8): web queues → Python worker
     expect(done.result.data.citations).toEqual([]);
     expect(done.generation).toMatchObject({ mode: "model", providers: ["openai"], calls: 3, repairs: 0 });
     expect(done.generation.prompts.sort()).toEqual(
-      ["decision-brief-synthesis@2.3.0", "decision-critic@2.1.0", "decision-framing@2.1.0"]
+      ["decision-brief-synthesis@2.4.0", "decision-critic@2.2.0", "decision-framing@2.2.0"]
     );
     expect(done.generation.costUsd).toBeGreaterThan(0);
     expect(done.usage.costUsd).toBeGreaterThanOrEqual(done.generation.costUsd);

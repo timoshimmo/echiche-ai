@@ -7,6 +7,7 @@ import { RUN_ERROR_MESSAGES, type Project, type ThoughtRunWithEvents } from "@/l
 import { DecisionBriefView, generationDetail, generationLabel, ScaffoldView } from "../../../../../decision-brief";
 import { api, ApiError, errorMessage } from "../../../../../lib/api";
 import { formatDate, isSettled, routeReasons, routeSummary, STAGES, stageStates } from "../../../../../lib/run-display";
+import { AttachmentList } from "../../../../../ui/attachments";
 import { RunStatusBadge } from "../../../../../ui/lists";
 import { Badge, ConfirmDialog, EmptyState, Notice, Skeleton } from "../../../../../ui/primitives";
 
@@ -139,6 +140,8 @@ export default function RunPage() {
           </div>
         )}
       </section>
+
+      <AttachmentList items={run.attachments} settled={settled} />
 
       {result?.schemaVersion === "reasoning-scaffold.v1" && <ScaffoldView result={result.data} />}
       {result?.schemaVersion === "decision-brief.v1" &&

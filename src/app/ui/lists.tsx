@@ -23,6 +23,7 @@ export function RunRow({ run, projectTitle }: { run: ThoughtRun; projectTitle?: 
             <span>Started {relativeTime(run.createdAt)}</span>
             {run.route.tier && <><span aria-hidden="true">·</span><span>{TIER_LABEL[run.route.tier]}</span></>}
             {run.result && run.generation.mode === "demo" && <><span aria-hidden="true">·</span><span>Demo mode</span></>}
+            {run.attachments.length > 0 && <><span aria-hidden="true">·</span><span>{run.attachments.length} attachment{run.attachments.length === 1 ? "" : "s"}</span></>}
           </span>
         </span>
         <span className="list-row-side">

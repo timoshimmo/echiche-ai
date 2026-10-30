@@ -111,7 +111,7 @@ class OpenAIModelClient:
             response = self._client.responses.create(
                 model=self.model,
                 instructions=request.instructions,
-                input=[{"role": "user", "content": request.data}],
+                input=[{"role": "user", "content": _content(request)}],
                 text={
                     "format": {
                         "type": "json_schema",
@@ -144,6 +144,15 @@ class OpenAIModelClient:
         if response.status != "completed":
             raise ModelCallError(TransientProviderError(f"provider returned status {response.status}"), usage, latency)
         return ModelReply(status="completed", text=response.output_text, usage=usage, model=model, latency_ms=latency)
+
+
+def _content(request: ModelRequest) -> Any:  # noqa: ANN401 - SDK input union
+    """Plain text, or (ADR-012) the fenced data followed by the attached images."""
+    if not request.images:
+        return request.data
+    parts: list[dict[str, str]] = [{"type": "input_text", "text": request.data}]
+    parts.extend({"type": "input_image", "image_url": url, "detail": "high"} for url in request.images)
+    return parts
 
 
 def _ms(started: float) -> int:

@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Literal, Protocol
 
+from echiche_worker.attachments import DEMO_NOTE, Attachment, AttachmentRead, failed
 from echiche_worker.contracts import Stage, StageOutput, StageOutputV2
 from echiche_worker.memory import ContextItem, DecisionItem, MemoryItem
 from echiche_worker.routing import FULL, RouteSettings
@@ -142,6 +143,8 @@ class StageContext:
     run_memory: list[ContextItem] = field(default_factory=list[ContextItem])
     # Adaptive compute (M7): what the router's tier allows this run to do.
     route: RouteSettings = FULL
+    # ADR-012: files and links attached to the question (text already extracted where possible).
+    attachments: tuple[Attachment, ...] = ()
 
     def spent_usd(self) -> Decimal:
         return sum((c.cost_usd for c in self.calls), Decimal("0")) + sum(
@@ -156,6 +159,7 @@ class StageResult:
     cost_usd: Decimal = field(default_factory=lambda: Decimal("0"))
     memory_context: list[ContextItem] = field(default_factory=list[ContextItem])  # set by planning only
     escalation: str | None = None  # set by synthesis when an escalation trigger fired (ADR-010)
+    attachment_reads: list[AttachmentRead] = field(default_factory=list[AttachmentRead])  # set by planning only
 
 
 class ReasoningProvider(Protocol):
@@ -224,4 +228,13 @@ class DeterministicProvider:
             ),
         }
         title, content, limitations = texts[stage]
-        return StageResult(output=StageOutputV2(stage=stage, title=title, content=content, limitations=limitations))
+        reads: list[AttachmentRead] = []
+        if stage == "planning" and ctx.attachments:
+            # Demo mode has no model: nothing attached is used, and images and links cannot even be read.
+            reads = [failed(a, DEMO_NOTE) for a in ctx.attachments if a.status == "pending"]
+            demo = "Demo mode: attached files and links were not used (no AI model is configured)."
+            limitations = [*limitations, demo]
+        return StageResult(
+            output=StageOutputV2(stage=stage, title=title, content=content, limitations=limitations),
+            attachment_reads=reads,
+        )

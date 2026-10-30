@@ -36,6 +36,14 @@ class ModelRequest:
     json_schema: dict[str, Any]  # strict JSON Schema for the output
     max_output_tokens: int
     timeout_seconds: float
+    # ADR-012: images the user attached, as data URLs ("data:image/png;base64,..."), sent with the data
+    # message. Only the attachment reader uses them; every other call is text-only.
+    images: tuple[str, ...] = ()
+
+
+# Upper bound on the input tokens one image can cost (OpenAI resizes images before tokenising;
+# large high-detail images stay well under this). Used only for the worst-case preflight.
+IMAGE_TOKEN_BOUND = 6_000
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,6 +120,7 @@ class PriceTable:
             + len(request.data.encode("utf-8"))
             + len(json.dumps(request.json_schema).encode("utf-8"))
             + 512  # message framing
+            + IMAGE_TOKEN_BOUND * len(request.images)
         )
         usage = TokenUsage(input_tokens=input_bytes, output_tokens=request.max_output_tokens)
         return self.cost(model, usage, residency)

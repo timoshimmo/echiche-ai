@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { classify, tierBudget } from "@/lib/domain/routing";
+import { classify, tierBudget, withAttachmentFloor } from "@/lib/domain/routing";
+import { attachmentFingerprint } from "./attachment-fingerprint";
 import type {
   CreateProjectInput, Project, RunBudget, RunEvent, RunEvidence, StartRunInput, ThoughtRun, UpdateProjectInput
 } from "@/lib/domain/types";
@@ -21,7 +22,7 @@ import {
  * stands in for the Python worker.
  */
 type Owned<T> = T & { ownerId: string };
-type StoredRun = Owned<ThoughtRun> & { idempotencyKey?: string };
+type StoredRun = Owned<ThoughtRun> & { idempotencyKey?: string; fingerprint?: string };
 
 export class MemoryStore implements Store {
   readonly projects = new Map<string, Owned<Project>>();
@@ -58,9 +59,10 @@ const DEMO_GENERATION: ThoughtRun["generation"] = {
   mode: "demo", providers: [], models: [], prompts: [], calls: 0, repairs: 0, inputTokens: 0, outputTokens: 0, costUsd: 0
 };
 function strip<T extends object>(owned: Owned<T>): T {
-  const copy: Partial<Owned<T> & { idempotencyKey?: string }> = { ...owned };
+  const copy: Partial<Owned<T> & { idempotencyKey?: string; fingerprint?: string }> = { ...owned };
   delete copy.ownerId;
   delete copy.idempotencyKey;
+  delete copy.fingerprint;
   return copy as T;
 }
 
@@ -144,7 +146,8 @@ class MemoryOwnerRepository implements OwnerScopedRepository {
     if (options.idempotencyKey) {
       const existing = [...this.store.runs.values()].find(r => r.ownerId === this.ownerId && r.idempotencyKey === options.idempotencyKey);
       if (existing) {
-        if (existing.projectId !== projectId || existing.prompt !== input.prompt || existing.route.requestedDepth !== (input.depth ?? "auto")) {
+        if (existing.projectId !== projectId || existing.prompt !== input.prompt || existing.route.requestedDepth !== (input.depth ?? "auto")
+          || (existing.fingerprint ?? "") !== attachmentFingerprint(input.attachments ?? [])) {
           throw new IdempotencyConflictError();
         }
         return { run: strip(existing), created: false };
@@ -156,7 +159,8 @@ class MemoryOwnerRepository implements OwnerScopedRepository {
     const remembered = [...this.store.memories.values()].some(m => m.projectId === projectId && m.status === "active")
       || [...this.store.decisions.values()].some(d => d.projectId === projectId && d.status === "active");
     const depth = input.depth ?? "auto";
-    const decision = classify({ prompt: input.prompt, depth, hasMemory: remembered });
+    const attachments = input.attachments ?? [];
+    const decision = withAttachmentFloor(classify({ prompt: input.prompt, depth, hasMemory: remembered }), attachments.length);
     const budget = tierBudget(decision.tier, options.budget);
     this.reserve(budget.maxCostUsd, options.spend);
     this.record("run", budget.maxCostUsd);
@@ -166,7 +170,9 @@ class MemoryOwnerRepository implements OwnerScopedRepository {
       cancelRequested: false, attempt: 0, budget,
       usage: { steps: 0, activeSeconds: 0, researchCalls: 0, costUsd: 0 }, completedStages: [],
       createdAt: now, startedAt: null, updatedAt: now, completedAt: null,
-      ownerId: this.ownerId, idempotencyKey: options.idempotencyKey
+      attachments: attachments.map(a => ({ id: randomUUID(), position: a.position, kind: a.kind, name: a.name, url: a.url,
+        sizeBytes: a.sizeBytes, status: a.status, truncated: a.truncated, note: a.note })),
+      ownerId: this.ownerId, idempotencyKey: options.idempotencyKey, fingerprint: attachmentFingerprint(attachments)
     };
     this.store.runs.set(run.id, run);
     this.store.events.set(run.id, []);

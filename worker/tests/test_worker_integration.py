@@ -451,3 +451,82 @@ def test_many_workers_drain_many_runs_each_exactly_once(admin: Admin, store_fact
         (run_ids,),
     ).fetchall()
     assert dupes == []
+
+
+# --- attachments (ADR-012) -------------------------------------------------------------
+
+
+def _attach(admin: Admin, run_id: str, position: int, kind: str, status: str, **values: object) -> str:
+    row = admin.execute(
+        """insert into echiche.run_attachments
+             (owner_user_id, run_id, position, kind, name, media_type, url, content_sha256, status, extracted_text,
+              image_data)
+           select owner_user_id, id, %s, %s, %s, %s, %s, %s, %s, %s, %s from echiche.thought_runs where id = %s
+           returning id""",
+        (
+            position,
+            kind,
+            f"{kind}-{position}",
+            values.get("media_type"),
+            values.get("url"),
+            "a" * 64,
+            status,
+            values.get("text"),
+            values.get("image"),
+            run_id,
+        ),
+    ).fetchone()
+    assert row is not None
+    return str(row["id"])
+
+
+def test_worker_loads_attachments_and_records_what_it_read(admin: Admin, store_factory: Any) -> None:
+    run_id = create_run(admin)
+    _attach(admin, run_id, 1, "pdf", "ready", text="Runway is 14 months.")
+    image = _attach(admin, run_id, 2, "image", "pending", media_type="image/png", image=b"\x89PNG fake")
+    link = _attach(admin, run_id, 3, "link", "pending", url="https://example.org/a")
+    store: RunStore = store_factory()
+    run = store.claim()
+    assert run is not None
+
+    seen: list[tuple[str, ...]] = []
+
+    class Reader(DeterministicProvider):
+        def run_stage(self, stage: Stage, ctx: StageContext) -> StageResult:
+            seen.append(tuple(f"{a.ref}:{a.status}" for a in ctx.attachments))
+            result = super().run_stage(stage, ctx)
+            if stage == "planning":
+                assert ctx.attachments[1].image == b"\x89PNG fake"  # bytes available while unread
+            return result
+
+    assert execute(run, store, Reader(), FAST, Event()) is Outcome.AWAITING_REVIEW
+    # Demo mode marks the image and link unread at planning; later stages see the recorded status.
+    assert seen[0] == ("A1:ready", "A2:pending", "A3:pending")
+    assert all(s == ("A1:ready", "A2:failed", "A3:failed") for s in seen[1:])
+    rows = admin.execute(
+        "select id, status, image_data, read_at, note from echiche.run_attachments where run_id = %s order by position",
+        (run_id,),
+    ).fetchall()
+    by_id = {str(r["id"]): r for r in rows}
+    for attachment in (image, link):
+        assert by_id[attachment]["status"] == "failed" and by_id[attachment]["read_at"] is not None
+        assert by_id[attachment]["image_data"] is None and "demo mode" in by_id[attachment]["note"]
+
+
+def test_worker_cannot_rewrite_attachments_beyond_their_reading_result(admin: Admin, worker_url: str) -> None:
+    run_id = create_run(admin)
+    attachment = _attach(admin, run_id, 1, "link", "pending", url="https://example.org/a")
+    with psycopg.connect(worker_url, autocommit=True) as conn:
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            conn.execute(
+                "update echiche.run_attachments set url = 'https://evil.example/' where id = %s", (attachment,)
+            )
+    with psycopg.connect(worker_url, autocommit=True) as conn:
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            conn.execute(
+                "insert into echiche.run_attachments"
+                " (owner_user_id, run_id, position, kind, name, content_sha256, status)"
+                " select owner_user_id, id, 2, 'text', 'x', repeat('a', 64), 'ready'"
+                " from echiche.thought_runs where id = %s",
+                (run_id,),
+            )
