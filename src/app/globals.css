@@ -576,3 +576,4 @@ a.source-chip:hover { border-color: var(--color-sage); }
   .attached-side { width: 100%; justify-content: flex-start; padding-left: 56px; }
   .attach-link { min-width: 100%; }
 }
+.attach-found { margin: 0; font-size: var(--text-xs); color: var(--color-sage-deep); overflow-wrap: anywhere; }

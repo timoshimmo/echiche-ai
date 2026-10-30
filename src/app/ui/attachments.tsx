@@ -24,6 +24,52 @@ export function fileSize(bytes: number): string {
 
 const isImage = (f: File) => f.type.startsWith("image/") || /\.(png|jpe?g|gif|webp)$/i.test(f.name);
 
+/**
+ * Web addresses written in the question itself (https://…, http://… or www.…), so they are read like
+ * links added with "Add link". Trailing punctuation is dropped; http is upgraded to https (the
+ * reader only fetches https). Returns each address once, in order.
+ */
+export function linksInText(text: string): string[] {
+  const found: string[] = [];
+  for (const match of text.matchAll(/\b(?:https?:\/\/|www\.)[^\s<>"'()]+/gi)) {
+    let url = match[0].replace(/[.,;:!?)\]}'"]+$/, "");
+    if (/^www\./i.test(url)) url = `https://${url}`;
+    url = url.replace(/^http:\/\//i, "https://");
+    try { new URL(url); } catch { continue; }
+    if (!found.includes(url)) found.push(url);
+  }
+  return found;
+}
+
+/** A link typed into the link field: a full https address, adding https:// when it was left out. */
+export const normaliseLink = (value: string) => {
+  const v = value.trim();
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(v)) return v.replace(/^http:\/\//i, "https://"); // other schemes are refused by checkDrafts
+  return `https://${v}`;
+};
+
+/**
+ * Everything the question will carry: the attached items, a link still sitting in the link field
+ * (not lost because "Add link" wasn't pressed), then links found in the question text, within the
+ * limits. Returns the list and the addresses left out because of the limits.
+ */
+export function collectDrafts(drafts: Draft[], pendingLink: string, question: string): { drafts: Draft[]; skipped: string[]; error: string | null } {
+  let all = [...drafts];
+  if (pendingLink.trim()) {
+    const draft: Draft = { kind: "link", url: normaliseLink(pendingLink) };
+    const error = checkDrafts(all, [draft]);
+    if (error && error !== "That link is already attached.") return { drafts, skipped: [], error };
+    if (!error) all = [...all, draft];
+  }
+  const skipped: string[] = [];
+  for (const url of linksInText(question)) {
+    if (all.some(d => d.kind === "link" && d.url === url)) continue;
+    if (checkDrafts(all, [{ kind: "link", url }]) === null) all = [...all, { kind: "link", url }];
+    else skipped.push(url);
+  }
+  return { drafts: all, skipped, error: null };
+}
+
 /** Returns a reason the new items can't be added, or null. */
 export function checkDrafts(current: Draft[], added: Draft[]): string | null {
   const all = [...current, ...added];
@@ -47,9 +93,15 @@ export function checkDrafts(current: Draft[], added: Draft[]): string | null {
 }
 
 /** The attachment area of the question form: add files (button or drop) and https links, remove any. */
-export function AttachmentPicker({ drafts, onChange, disabled }: { drafts: Draft[]; onChange: (next: Draft[]) => void; disabled?: boolean }) {
+export function AttachmentPicker({ drafts, onChange, disabled, link, onLinkChange, foundLinks = [] }: {
+  drafts: Draft[]; onChange: (next: Draft[]) => void; disabled?: boolean;
+  /** The link field's text, held by the form so a link that wasn't added with "Add link" is still sent. */
+  link: string; onLinkChange: (value: string) => void;
+  /** Addresses written in the question text, which will be read too. */
+  foundLinks?: string[];
+}) {
   const input = useRef<HTMLInputElement>(null);
-  const [link, setLink] = useState("");
+  const setLink = onLinkChange;
   const [error, setError] = useState("");
   const [over, setOver] = useState(false);
   const id = useId();
@@ -62,7 +114,7 @@ export function AttachmentPicker({ drafts, onChange, disabled }: { drafts: Draft
   function addLink() {
     const value = link.trim();
     if (!value) return;
-    const draft: Draft = { kind: "link", url: /^https?:\/\//i.test(value) ? value : `https://${value}` };
+    const draft: Draft = { kind: "link", url: normaliseLink(value) };
     const problem = checkDrafts(drafts, [draft]);
     setError(problem ?? "");
     if (!problem) { onChange([...drafts, draft]); setLink(""); }
@@ -107,9 +159,14 @@ export function AttachmentPicker({ drafts, onChange, disabled }: { drafts: Draft
           </div>
         </div>
         <p className="attach-drop muted" aria-hidden="true">or drop files here</p>
+        {foundLinks.length > 0 && (
+          <p className="attach-found" role="status">
+            Links in your question will be read too: {foundLinks.map(u => u.replace(/^https:\/\//, "")).join(", ")}
+          </p>
+        )}
       </div>
       <span className="field-hint" id={`${id}-hint`}>
-        Text, CSV, PDF, Word, Excel, images or web links, up to 5 (files up to 5 MB). Echiche reads them to think through your question; their content isn&rsquo;t shown.
+        Text, CSV, PDF, Word, Excel, images or web links, up to 5 (files up to 5 MB). Web addresses you write in your question are read as well. Echiche reads all of these to think through your question; their content isn&rsquo;t shown.
       </span>
       {error && <span className="field-error" role="alert">{error}</span>}
     </div>
