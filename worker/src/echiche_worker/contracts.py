@@ -375,6 +375,18 @@ CLAIM_VERIFICATION_SCHEMA_VERSION = "claim-verification.v1"
 EVIDENCE_SET_SCHEMA_VERSION = "evidence-set.v1"
 VERIFICATION_REPORT_SCHEMA_VERSION = "verification-report.v1"
 
+# --- Attachment reading (ADR-012) -----------------------------------------------------
+
+ATTACHMENT_READING_SCHEMA_VERSION = "attachment-reading.v1"
+
+
+class AttachmentReadingV1(_Strict):
+    """What the model could read from an image the user attached: its text and a factual description."""
+
+    readable: bool
+    content: str = Field(max_length=8000)
+
+
 MODEL_OUTPUTS: dict[str, type[BaseModel]] = {
     DECISION_FRAME_SCHEMA_VERSION: DecisionFrameV1,
     DECISION_FRAME_V2_SCHEMA_VERSION: DecisionFrameV2,
@@ -383,6 +395,7 @@ MODEL_OUTPUTS: dict[str, type[BaseModel]] = {
     RESEARCH_PLAN_SCHEMA_VERSION: ResearchPlanV1,
     CLAIM_SET_SCHEMA_VERSION: ClaimSetV1,
     CLAIM_VERIFICATION_SCHEMA_VERSION: ClaimVerificationV1,
+    ATTACHMENT_READING_SCHEMA_VERSION: AttachmentReadingV1,
 }
 
 # Checkpoint payloads the application builds itself (stage-output.v2 `data`).

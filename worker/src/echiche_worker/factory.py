@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from echiche_worker import __version__
 from echiche_worker.config import ConfigError, WorkerConfig
 from echiche_worker.llm import OPENAI_PRICES
@@ -9,6 +11,9 @@ from echiche_worker.model_provider import ModelReasoningProvider, ModelSettings
 from echiche_worker.prompts import PromptRegistry, PromptRegistryError
 from echiche_worker.provider import DeterministicProvider, ReasoningProvider
 from echiche_worker.research_pipeline import ResearchSettings
+
+if TYPE_CHECKING:
+    from echiche_worker.fetch import PageFetcher
 
 
 def build_provider(config: WorkerConfig) -> ReasoningProvider:
@@ -56,12 +61,21 @@ def build_provider(config: WorkerConfig) -> ReasoningProvider:
             )
             if escalation_model
             else None,
+            # ADR-012: reference links the user attaches are read with the same SSRF-safe, robots-respecting
+            # fetcher as research, whether or not web research is switched on.
+            link_fetcher=_link_fetcher(config),
         )
     except (PromptRegistryError, ValueError, KeyError) as error:
         raise ConfigError([f"reasoning provider: {error}"]) from error
 
 
 USER_AGENT = f"EchicheResearchBot/{__version__}"
+
+
+def _link_fetcher(config: WorkerConfig) -> PageFetcher:
+    from echiche_worker.fetch import PageFetcher
+
+    return PageFetcher(USER_AGENT, config.fetch_timeout_seconds, config.fetch_max_bytes)
 
 
 def build_research(config: WorkerConfig) -> ResearchSettings | None:

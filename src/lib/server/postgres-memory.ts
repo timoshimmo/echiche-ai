@@ -257,6 +257,11 @@ export async function exportProject(tx: Tx, ownerId: string, projectId: string):
            coalesce((select json_agg(json_build_object('claimId', c.claim_key, 'text', c.text, 'label', c.label,
                        'status', c.status, 'freshness', c.freshness, 'contradicted', c.contradicted) order by c.claim_key)
                        from echiche.claims c where c.run_id = r.id and c.owner_user_id = r.owner_user_id), '[]') as claims,
+           -- ADR-012: the text read from each attachment is the user's data, so it is exported (image bytes are not).
+           coalesce((select json_agg(json_build_object('position', a.position, 'kind', a.kind, 'name', a.name, 'url', a.url,
+                       'sizeBytes', a.size_bytes, 'status', a.status, 'note', a.note, 'truncated', a.truncated,
+                       'extractedText', a.extracted_text, 'createdAt', a.created_at, 'readAt', a.read_at) order by a.position)
+                       from echiche.run_attachments a where a.run_id = r.id and a.owner_user_id = r.owner_user_id), '[]') as attachments,
            (select json_build_object('calls', count(*), 'costUsd', coalesce(sum(m.cost_usd), 0),
                      'models', coalesce(array_agg(distinct m.model) filter (where m.model is not null), '{}'))
               from echiche.model_calls m where m.run_id = r.id and m.owner_user_id = r.owner_user_id) as "modelCalls"

@@ -33,6 +33,9 @@ export default function PrivacyPage() {
         <li><b>Your projects and decisions:</b> project titles and descriptions, the questions you ask, the briefs Echiche produces,
           memories you approve or add, decision versions and outcomes. This is the service itself: we process it to give you decision
           support and to keep your project&rsquo;s history.</li>
+        <li><b>Files and links you attach</b> to a question: the text Echiche reads from them (documents, spreadsheets, PDFs, Word
+          files, images and linked web pages), their names and sizes. Echiche uses this only to think through that question. The
+          original file is not kept, and images are deleted once they have been read.</li>
         <li><b>Research material</b> (when research is on): the search queries Echiche writes from your question, and short passages
           from public web pages it reads, with their links and dates, so every cited claim can be checked.</li>
         <li><b>Usage and security records:</b> run costs, token counts and timings, and logs of actions such as exports and deletions,
@@ -55,10 +58,11 @@ export default function PrivacyPage() {
       <ul>
         <li><b>Supabase</b> (database and sign-in) and <b>Render</b> (application hosting), both in Frankfurt, Germany.</li>
         <li><b>OpenAI</b>, to generate briefs: your project title and description, your question and the run&rsquo;s intermediate
-          results are sent to its API. OpenAI does not use API data for training by default and keeps abuse-monitoring logs for up
+          results are sent to its API, together with the text of anything you attach and any images you attach. OpenAI does not use API data for training by default and keeps abuse-monitoring logs for up
           to 30 days; we ask it not to store application state for our requests.</li>
-        <li><b>Brave Search</b>, only when research is on: search queries derived from your question (not your project text).
-          Public web pages are fetched by Echiche directly.</li>
+        <li><b>Brave Search</b>, only when research is on: short search queries Echiche writes from its framing of your question. They can reflect details from your project or attachments, but never include the files themselves.
+          Public web pages, including links you attach, are fetched by Echiche&rsquo;s server directly, so those websites see a
+          request from Echiche, not from you.</li>
       </ul>
       <p>
         Some of these providers process data outside Nigeria (in the European Union and the United States). We rely on [the
@@ -67,7 +71,8 @@ export default function PrivacyPage() {
 
       <h2>How long we keep it</h2>
       <ul>
-        <li>Projects, runs, memories and decisions: until you delete them in the app, or until your account is closed.</li>
+        <li>Projects, runs (including what was read from your attachments), memories and decisions: until you delete them in the
+          app, or until your account is closed.</li>
         <li>Deleting a memory removes all its versions; deleting a project removes everything in it. Deleted data can remain in
           encrypted backups for up to [backup retention period, to be confirmed] before it is overwritten.</li>
         <li>Usage records used for abuse limits: about 30 days. Logs: [log retention period, to be confirmed].</li>

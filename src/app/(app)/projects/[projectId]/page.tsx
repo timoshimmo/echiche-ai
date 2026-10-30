@@ -7,6 +7,7 @@ import type { Memory, Project, ThoughtRun } from "@/lib/domain/types";
 import { JournalPanel, MemoryPanel } from "../../../journal";
 import { api, ApiError, errorMessage } from "../../../lib/api";
 import { DEPTHS, type Depth, formatDate, isSettled } from "../../../lib/run-display";
+import { AttachmentPicker, type Draft } from "../../../ui/attachments";
 import { RunRow } from "../../../ui/lists";
 import { Badge, ConfirmDialog, EmptyState, Field, Notice, Skeleton, Tabs } from "../../../ui/primitives";
 
@@ -130,6 +131,7 @@ function ThinkingPanel({ project, runs }: { project: Project; runs: ThoughtRun[]
   const router = useRouter();
   const [prompt, setPrompt] = useState(runs.length === 0 ? project.problemStatement : "");
   const [depth, setDepth] = useState<Depth>("auto");
+  const [drafts, setDrafts] = useState<Draft[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const active = runs.find(r => !isSettled(r.status));
@@ -137,8 +139,20 @@ function ThinkingPanel({ project, runs }: { project: Project; runs: ThoughtRun[]
   async function start(event: FormEvent) {
     event.preventDefault(); setBusy(true); setError("");
     try {
+      let body: unknown = { prompt: prompt.trim(), depth };
+      if (drafts.length) {
+        // With attachments the question is sent as multipart; the server reads the files before queuing.
+        const form = new FormData();
+        form.set("prompt", prompt.trim());
+        form.set("depth", depth);
+        for (const d of drafts) {
+          if (d.kind === "file") form.append("files", d.file, d.file.name);
+          else form.append("links", d.url);
+        }
+        body = form;
+      }
       const run = await api<ThoughtRun>(`/api/projects/${project.id}/runs`, {
-        method: "POST", headers: { "idempotency-key": crypto.randomUUID() }, body: { prompt: prompt.trim(), depth }
+        method: "POST", headers: { "idempotency-key": crypto.randomUUID() }, body
       });
       router.push(`/projects/${project.id}/runs/${run.id}`);
     } catch (e) { setError(errorMessage(e, "Could not start the run.")); setBusy(false); }
@@ -160,13 +174,14 @@ function ThinkingPanel({ project, runs }: { project: Project; runs: ThoughtRun[]
           <Field label="Your question or decision" hint="10–8,000 characters. Echiche also sees what this project remembers.">{props =>
             <textarea {...props} className="textarea" value={prompt} onChange={e => setPrompt(e.target.value)} minLength={10} maxLength={8000} required rows={5}
               placeholder="What do you need to decide now, and what would help you decide?" />}</Field>
-          <Field label="Depth" hint={hint}>{props =>
+          <AttachmentPicker drafts={drafts} onChange={setDrafts} disabled={busy || !!project.archivedAt} />
+          <Field label="Depth" hint={drafts.length && depth === "quick" ? `${hint} With attachments, a run is at least Standard.` : hint}>{props =>
             <select {...props} className="select" value={depth} onChange={e => setDepth(e.target.value as Depth)}>
               {DEPTHS.map(d => <option key={d.value} value={d.value}>{d.label}</option>)}
             </select>}</Field>
           <div>
             <button className="btn btn-primary" disabled={busy || !!active || !!project.archivedAt || prompt.trim().length < 10}>
-              {busy && <span className="spinner" aria-hidden="true" />}{busy ? "Starting…" : "Think it through"} {!busy && <span className="btn-arrow" aria-hidden="true">→</span>}
+              {busy && <span className="spinner" aria-hidden="true" />}{busy ? (drafts.length ? "Reading attachments…" : "Starting…") : "Think it through"} {!busy && <span className="btn-arrow" aria-hidden="true">→</span>}
             </button>
           </div>
         </form>

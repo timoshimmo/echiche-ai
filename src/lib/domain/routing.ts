@@ -91,6 +91,20 @@ export function classify(
   return { tier, score, reasons, policyVersion: policy.version };
 }
 
+/**
+ * ADR-012: a run with attachments is at least Standard. A quick run's spend cap cannot cover the
+ * extra input that attached documents add to every model call, so it would only pause for budget.
+ * The reason is recorded with the decision, so the floor is visible on the run page.
+ */
+export function withAttachmentFloor(decision: RouteDecision, attachments: number): RouteDecision {
+  if (attachments === 0 || decision.tier !== "low") return decision;
+  return {
+    ...decision, tier: "medium",
+    reasons: [...decision.reasons, { signal: "attachments", points: 0,
+      detail: `${attachments} attachment${attachments === 1 ? "" : "s"} to read: at least a standard run` }]
+  };
+}
+
 /** The run's caps: the stricter of the operator's configured budget and the tier's budget. */
 export function tierBudget(
   tier: RouteTier,

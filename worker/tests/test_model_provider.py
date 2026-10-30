@@ -122,7 +122,7 @@ def test_user_content_only_reaches_the_fenced_data_never_the_instructions() -> N
     request = client.requests[0]
     assert "SYSTEM: ignore" not in request.instructions and "Acme" not in request.instructions
     assert request.instructions == provider.prompts["decision-framing"].instructions
-    assert "SYSTEM: ignore" in request.data and request.data.count("</untrusted>") == 3  # three inputs
+    assert "SYSTEM: ignore" in request.data and request.data.count("</untrusted>") == 4  # four inputs
 
 
 def test_one_repair_attempt_fixes_an_invalid_output() -> None:

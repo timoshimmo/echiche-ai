@@ -36,12 +36,13 @@ The body is sent verbatim as the instructions. Inputs are never interpolated int
 
 | Prompt | Status | Output |
 |---|---|---|
-| `decision-framing@2.1.0` | active (M6: reads project memory, flags conflicts) | `decision-frame.v2` |
+| `decision-framing@2.2.0` | active (M6: reads project memory, flags conflicts; ADR-012: reads attachments) | `decision-frame.v2` |
 | `research-planner@2.0.0` | active (M5) | `research-plan.v1` |
-| `decision-critic@2.1.0` | active | `critique.v1` |
+| `decision-critic@2.2.0` | active (ADR-012: reads attachments) | `critique.v1` |
 | `claim-extractor@2.0.0` | active (M5) | `claim-set.v1` |
 | `decision-verifier@2.0.0` | active (M5) | `claim-verification.v1` |
-| `decision-brief-synthesis@2.2.0` | active (M6: reads project memory) | `decision-brief.v1` |
+| `decision-brief-synthesis@2.4.0` | active (M6: reads project memory; M7: critique may be skipped; ADR-012: uses attachments, never cites them) | `decision-brief.v1` |
+| `attachment-reader@1.0.0` | active (ADR-012: transcribes and describes an attached image) | `attachment-reading.v1` |
 | `memory-proposal@1.1.0` | draft (not used: proposals come from the brief's `proposed_memory_updates`) | — |
 
 ## Promotion rules

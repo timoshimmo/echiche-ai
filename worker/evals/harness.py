@@ -34,6 +34,7 @@ from typing import Any, cast
 
 from pydantic import BaseModel
 
+from echiche_worker.attachments import Attachment, AttachmentRead
 from echiche_worker.contracts import (
     DECISION_BRIEF_SCHEMA_VERSION,
     EVIDENCE_SET_SCHEMA_VERSION,
@@ -108,6 +109,7 @@ class BaselineProvider(ModelReasoningProvider):
                 "critique_json": json.dumps({"not_run": "No critique in this baseline."}),
                 "evidence_json": evidence_for_model(evidence),
                 "project_memory_json": "[]",
+                "attachments_json": "[]",
             },
             time.monotonic() + ctx.timeout_seconds,
             check=lambda b: check_brief(b, allowed),
@@ -128,6 +130,8 @@ class MemoryStore:
     calls: list[ModelCallRecord] = field(default_factory=list[ModelCallRecord])
     research_calls: list[ResearchCallRecord] = field(default_factory=list[ResearchCallRecord])
     run_memory: list[ContextItem] = field(default_factory=list[ContextItem])
+    attachments: list[Attachment] = field(default_factory=list[Attachment])
+    attachment_reads: list[AttachmentRead] = field(default_factory=list[AttachmentRead])
     status: str = "queued"
     error_code: str | None = None
     result: BaseModel | None = None
@@ -140,6 +144,9 @@ class MemoryStore:
 
     def load_run_memory(self, _run_id: str) -> list[ContextItem]:
         return list(self.run_memory)
+
+    def load_attachments(self, _run_id: str) -> tuple[Attachment, ...]:
+        return tuple(self.attachments)
 
     def cancel_requested(self, _run_id: str) -> bool:
         return False
@@ -170,7 +177,9 @@ class MemoryStore:
         research_records: Sequence[ResearchCallRecord] = (),
         memory_context: Sequence[ContextItem] = (),
         escalation: str | None = None,
+        attachment_reads: Sequence[AttachmentRead] = (),
     ) -> Usage:
+        self.attachment_reads.extend(attachment_reads)
         v2 = to_v2(output)
         self.outputs[v2.stage] = v2
         self.calls.extend(calls)

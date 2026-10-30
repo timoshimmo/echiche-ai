@@ -5,11 +5,12 @@ import type {
   RememberedContext, ReviseDecisionInput
 } from "@/lib/domain/memory";
 import { parseRunResult } from "@/lib/domain/reasoning";
-import { classify, tierBudget } from "@/lib/domain/routing";
+import { classify, tierBudget, withAttachmentFloor } from "@/lib/domain/routing";
+import { attachmentFingerprint } from "./attachment-fingerprint";
 import * as journal from "./postgres-memory";
 import {
-  RUN_EVENT_TYPES, RUN_STAGES, RUN_STATUSES,
-  type CreateProjectInput, type GenerationSummary, type Project, type RunBudget, type RunEvidence, type RunEvent, type StartRunInput,
+  ATTACHMENT_KINDS, RUN_EVENT_TYPES, RUN_STAGES, RUN_STATUSES,
+  type AttachmentSummary, type CreateProjectInput, type GenerationSummary, type Project, type RunBudget, type RunEvidence, type RunEvent, type StartRunInput,
   type ThoughtRun, type UpdateProjectInput
 } from "@/lib/domain/types";
 import {
@@ -32,6 +33,11 @@ type RunRow = {
   completed_stages: string[]; generation: GenerationRow; created_at: Date;
   requested_depth: "auto" | "quick" | "standard" | "deep"; route_tier: "low" | "medium" | "high" | null;
   route_reasons: { signal: string; points: number; detail: string }[]; route_policy_version: string | null; route_escalation: string | null; started_at: Date | null; updated_at: Date; completed_at: Date | null;
+  attachments: AttachmentRow[] | null;
+};
+type AttachmentRow = {
+  id: string; position: number; kind: string; name: string; url: string | null; size_bytes: number;
+  status: string; truncated: boolean; note: string | null; content_sha256: string;
 };
 type GenerationRow = {
   calls: number; repairs: number; input_tokens: number; output_tokens: number; cost_usd: string | number;
@@ -66,7 +72,11 @@ const RUN_COLUMNS = `r.id, r.project_id, r.prompt, r.status, r.result, r.result_
             'cost_usd', coalesce(sum(m.cost_usd), 0),
             'providers', array_agg(distinct m.provider), 'models', array_agg(distinct m.model),
             'prompts', array_agg(distinct m.prompt_id || '@' || m.prompt_version))
-     from echiche.model_calls m where m.run_id = r.id and m.owner_user_id = r.owner_user_id) as generation`;
+     from echiche.model_calls m where m.run_id = r.id and m.owner_user_id = r.owner_user_id) as generation,
+  (select json_agg(json_build_object(
+            'id', a.id, 'position', a.position, 'kind', a.kind, 'name', a.name, 'url', a.url, 'size_bytes', a.size_bytes,
+            'status', a.status, 'truncated', a.truncated, 'note', a.note, 'content_sha256', a.content_sha256) order by a.position)
+     from echiche.run_attachments a where a.run_id = r.id and a.owner_user_id = r.owner_user_id) as attachments`;
 
 function asProject(row: ProjectRow): Project {
   return {
@@ -103,9 +113,22 @@ function asRun(row: RunRow): ThoughtRun {
     },
     completedStages: RUN_STAGES.filter(stage => done.has(stage)),
     createdAt: row.created_at.toISOString(), startedAt: iso(row.started_at), updatedAt: row.updated_at.toISOString(),
-    completedAt: iso(row.completed_at)
+    completedAt: iso(row.completed_at),
+    attachments: (row.attachments ?? []).map(asAttachment)
   };
 }
+
+/** Names and reading status only: extracted text and image bytes never leave the database this way. */
+function asAttachment(row: AttachmentRow): AttachmentSummary {
+  const kind = ATTACHMENT_KINDS.find(k => k === row.kind);
+  const status = (["ready", "pending", "failed"] as const).find(s => s === row.status);
+  if (!kind || !status) throw new DataIntegrityError("run_attachment.kind/status", row.id);
+  return { id: row.id, position: row.position, kind, name: row.name, url: row.url, sizeBytes: row.size_bytes, status,
+    truncated: row.truncated, note: row.note };
+}
+
+const fingerprintOf = (rows: AttachmentRow[] | null) =>
+  attachmentFingerprint((rows ?? []).map(a => ({ kind: a.kind, contentSha256: a.content_sha256 })));
 
 function asGeneration(row: GenerationRow): GenerationSummary {
   const calls = Number(row.calls);
@@ -247,13 +270,16 @@ class PostgresOwnerRepository implements OwnerScopedRepository {
 
   async createRun(projectId: string, input: StartRunInput, options: CreateRunOptions) {
     return this.tx(async tx => {
+      const attachments = input.attachments ?? [];
+      const fingerprint = attachmentFingerprint(attachments);
+      const sameRequest = (r: { run: ThoughtRun; fingerprint: string }) =>
+        r.run.projectId === projectId && r.run.prompt === input.prompt && r.run.route.requestedDepth === (input.depth ?? "auto")
+        && r.fingerprint === fingerprint;
       if (options.idempotencyKey) {
         const replay = await this.findByIdempotencyKey(tx, options.idempotencyKey);
         if (replay) {
-          if (replay.projectId !== projectId || replay.prompt !== input.prompt || replay.route.requestedDepth !== (input.depth ?? "auto")) {
-            throw new IdempotencyConflictError();
-          }
-          return { run: replay, created: false };
+          if (!sameRequest(replay)) throw new IdempotencyConflictError();
+          return { run: replay.run, created: false };
         }
       }
       const [project] = await tx<{ archived_at: Date | null }[]>`
@@ -265,10 +291,8 @@ class PostgresOwnerRepository implements OwnerScopedRepository {
       if (options.idempotencyKey) {
         const raced = await this.findByIdempotencyKey(tx, options.idempotencyKey);
         if (raced) {
-          if (raced.projectId !== projectId || raced.prompt !== input.prompt || raced.route.requestedDepth !== (input.depth ?? "auto")) {
-            throw new IdempotencyConflictError();
-          }
-          return { run: raced, created: false };
+          if (!sameRequest(raced)) throw new IdempotencyConflictError();
+          return { run: raced.run, created: false };
         }
       }
       const [{ remembered }] = await tx<{ remembered: boolean }[]>`
@@ -276,7 +300,7 @@ class PostgresOwnerRepository implements OwnerScopedRepository {
             or exists (select 1 from echiche.memories where project_id = ${projectId} and owner_user_id = ${this.ownerId} and status = 'active')
            as remembered`;
       const depth = input.depth ?? "auto";
-      const route = classify({ prompt: input.prompt, depth, hasMemory: remembered });
+      const route = withAttachmentFloor(classify({ prompt: input.prompt, depth, hasMemory: remembered }), attachments.length);
       const b = tierBudget(route.tier, options.budget);
       await this.reserveSpend(tx, b.maxCostUsd, options.spend);
       await this.ledger(tx, "run", b.maxCostUsd);
@@ -289,15 +313,23 @@ class PostgresOwnerRepository implements OwnerScopedRepository {
                 ${b.maxSteps}, ${b.maxActiveSeconds}, ${b.maxResearchCalls}, ${b.maxCostUsd},
                 ${depth}, ${route.tier}, ${tx.json(route.reasons)}, ${route.policyVersion})
         returning id`;
+      for (const a of attachments) {
+        await tx`
+          insert into echiche.run_attachments
+            (owner_user_id, run_id, position, kind, name, media_type, size_bytes, url, content_sha256, status,
+             extracted_text, truncated, image_data, note)
+          values (${this.ownerId}, ${inserted.id}, ${a.position}, ${a.kind}, ${a.name}, ${a.mediaType}, ${a.sizeBytes}, ${a.url},
+                  ${a.contentSha256}, ${a.status}, ${a.text}, ${a.truncated}, ${a.imageData}, ${a.note})`;
+      }
       return { run: (await this.selectRun(tx, inserted.id))!, created: true };
     });
   }
 
-  private async findByIdempotencyKey(tx: Tx, key: string): Promise<ThoughtRun | null> {
+  private async findByIdempotencyKey(tx: Tx, key: string): Promise<{ run: ThoughtRun; fingerprint: string } | null> {
     const [row] = await tx<RunRow[]>`
       select ${tx.unsafe(RUN_COLUMNS)} from echiche.thought_runs r
        where r.owner_user_id = ${this.ownerId} and r.idempotency_key = ${key}`;
-    return row ? asRun(row) : null;
+    return row ? { run: asRun(row), fingerprint: fingerprintOf(row.attachments) } : null;
   }
 
   private async selectRun(tx: Tx, id: string, lock = false): Promise<ThoughtRun | null> {

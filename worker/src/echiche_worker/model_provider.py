@@ -27,10 +27,21 @@ import json
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from pydantic import BaseModel, ValidationError
 
+from echiche_worker.attachments import (
+    Attachment,
+    AttachmentRead,
+    apply_reads,
+    attachments_json,
+    failed,
+    image_data_url,
+    read_link,
+    tidy,
+)
+from echiche_worker.attachments import limitations as attachment_limitations
 from echiche_worker.contracts import (
     CRITIQUE_SCHEMA_VERSION,
     DECISION_BRIEF_SCHEMA_VERSION,
@@ -39,6 +50,7 @@ from echiche_worker.contracts import (
     EVIDENCE_SET_SCHEMA_VERSION,
     MODEL_OUTPUTS,
     VERIFICATION_REPORT_SCHEMA_VERSION,
+    AttachmentReadingV1,
     ClaimSetV1,
     ClaimVerificationV1,
     CritiqueV1,
@@ -64,6 +76,7 @@ from echiche_worker.provider import (
     ProviderError,
     ProviderOutputTruncatedError,
     ProviderRefusedError,
+    ProviderRequestError,
     StageContext,
     StageResult,
 )
@@ -81,6 +94,9 @@ from echiche_worker.research_pipeline import (
 )
 from echiche_worker.routing import RouteSettings, escalation_reasons
 
+if TYPE_CHECKING:
+    from echiche_worker.fetch import PageFetcher
+
 MAX_REPAIR_ATTEMPTS = 1
 NOT_RUN_CRITIQUE = json.dumps(
     {
@@ -95,6 +111,7 @@ PROMPT_IDS = (
     "claim-extractor",
     "decision-verifier",
     "decision-brief-synthesis",
+    "attachment-reader",
 )
 
 
@@ -208,8 +225,10 @@ class ModelReasoningProvider:
         settings: ModelSettings,
         research: ResearchSettings | None = None,
         escalation: ModelClient | None = None,
+        link_fetcher: PageFetcher | None = None,
     ) -> None:
         self.client = client
+        self.link_fetcher = link_fetcher
         self.escalation = escalation
         self.prices = prices
         self.settings = settings
@@ -246,7 +265,11 @@ class ModelReasoningProvider:
                 stage,
                 ctx,
                 CritiqueV1,
-                {"decision_frame_json": _json(frame), "evidence_json": evidence_for_model(evidence)},
+                {
+                    "decision_frame_json": _json(frame),
+                    "evidence_json": evidence_for_model(evidence),
+                    "attachments_json": attachments_json(ctx.attachments),
+                },
                 deadline,
             )
             content = (
@@ -259,18 +282,20 @@ class ModelReasoningProvider:
             return self._verifying(ctx, frame, evidence, deadline)
         report = self._report(ctx)
         evidence_json, allowed = usable_evidence(report, evidence)
-        client, escalation = self._synthesis_client(ctx, critique, report)
+        inputs = {
+            "decision_frame_json": _json(frame),
+            "critique_json": _json(critique) if critique is not None else NOT_RUN_CRITIQUE,
+            "evidence_json": evidence_json,
+            "project_memory_json": context_json(ctx.run_memory),
+            "attachments_json": attachments_json(ctx.attachments),
+        }
+        client, escalation = self._synthesis_client(ctx, critique, report, inputs)
         brief = self._generate(
             "decision-brief-synthesis",
             stage,
             ctx,
             DecisionBriefV1,
-            {
-                "decision_frame_json": _json(frame),
-                "critique_json": _json(critique) if critique is not None else NOT_RUN_CRITIQUE,
-                "evidence_json": evidence_json,
-                "project_memory_json": context_json(ctx.run_memory),
-            },
+            inputs,
             deadline,
             check=lambda b: check_brief(b, allowed),
             client=client,
@@ -283,7 +308,11 @@ class ModelReasoningProvider:
         return dataclasses.replace(result, escalation=escalation)
 
     def _synthesis_client(
-        self, ctx: StageContext, critique: CritiqueV1 | None, report: VerificationReportV1 | None
+        self,
+        ctx: StageContext,
+        critique: CritiqueV1 | None,
+        report: VerificationReportV1 | None,
+        inputs: dict[str, str],
     ) -> tuple[ModelClient, str | None]:
         """High tier only: a stronger model for synthesis when a configured trigger fired (ADR-010).
         The outcome is always recorded, including when escalation was justified but not possible."""
@@ -293,24 +322,27 @@ class ModelReasoningProvider:
         why = ", ".join(fired)
         if self.escalation is None:
             return self.client, f"escalation triggered ({why}) but no escalation model is configured"
-        worst = self.prices.worst_case(self.escalation.model, self._probe_request(), self.settings.residency)
+        worst = self.prices.worst_case(self.escalation.model, self._probe_request(inputs), self.settings.residency)
         if worst > ctx.remaining_cost_usd - ctx.spent_usd():
             return self.client, f"escalation triggered ({why}) but skipped: it would exceed the remaining spend cap"
         return self.escalation, f"synthesis escalated to {self.escalation.model} ({why})"
 
-    def _probe_request(self) -> ModelRequest:
-        """A size estimate for the escalation preflight; the real call is preflighted again."""
+    def _probe_request(self, inputs: dict[str, str]) -> ModelRequest:
+        """The synthesis request as it will be sent, for the escalation preflight (the real call is
+        preflighted again). Sized from the real inputs, so attachments are accounted for exactly."""
         prompt = self.prompts["decision-brief-synthesis"]
+        rendered = render(prompt, inputs)
         return ModelRequest(
-            instructions=prompt.instructions,
-            data="x" * 60_000,
+            instructions=rendered.instructions,
+            data=rendered.data,
             schema_name="probe",
-            json_schema={},
+            json_schema=self._schemas[prompt.meta.output_schema],
             max_output_tokens=self.settings.max_output_tokens,
             timeout_seconds=1.0,
         )
 
     def _planning(self, ctx: StageContext, deadline: float) -> StageResult:
+        reads, attachments = self._read_attachments(ctx, deadline)
         memory = ctx.run_memory or select_context(ctx.project_memories, ctx.project_decision, ctx.prompt)
         refs = frozenset(i.ref for i in memory)
         frame = self._generate(
@@ -322,6 +354,7 @@ class ModelReasoningProvider:
                 "project_context": ctx.project_context,
                 "question": ctx.prompt,
                 "project_memory_json": context_json(memory),
+                "attachments_json": attachments_json(attachments),
             },
             deadline,
             check=lambda f: check_memory_refs(f, refs),
@@ -330,7 +363,7 @@ class ModelReasoningProvider:
             [f"Clarification would help: {frame.clarifying_question}"]
             if frame.clarification_needed and frame.clarifying_question
             else []
-        )
+        ) + attachment_limitations(attachments)
         content = (
             f"Decision: {frame.decision_statement}\n\nGoal: {frame.goal}\n\n"
             f"Options:\n{_bullets(frame.options)}\n\nCriteria:\n{_bullets(frame.criteria)}\n\n"
@@ -339,7 +372,51 @@ class ModelReasoningProvider:
         result = self._result(
             "planning", "Decision frame", content, frame, DECISION_FRAME_V2_SCHEMA_VERSION, limitations
         )
-        return StageResult(output=result.output, memory_context=memory)
+        return StageResult(output=result.output, memory_context=memory, attachment_reads=reads)
+
+    # --- attachments (ADR-012) -------------------------------------------------------
+
+    def _read_attachments(
+        self, ctx: StageContext, deadline: float
+    ) -> tuple[list[AttachmentRead], tuple[Attachment, ...]]:
+        """Reads the images and links still pending. Documents were already read by the web app."""
+        reads: list[AttachmentRead] = []
+        for attachment in ctx.attachments:
+            if attachment.status != "pending":
+                continue
+            if attachment.kind == "link":
+                if self.link_fetcher is None:
+                    reads.append(failed(attachment, "Links can't be read in this deployment."))
+                    continue
+                read, records = read_link(self.link_fetcher, attachment)
+                ctx.research_calls.extend(records)
+                reads.append(read)
+            elif attachment.kind == "image" and attachment.image is not None:
+                reads.append(self._read_image(ctx, attachment, deadline))
+            else:
+                reads.append(failed(attachment, "This attachment could not be read."))
+        return reads, apply_reads(ctx.attachments, reads)
+
+    def _read_image(self, ctx: StageContext, attachment: Attachment, deadline: float) -> AttachmentRead:
+        """The model transcribes and describes the image. Content problems (a refusal, an unreadable
+        image, a model without image input) mark only this attachment as unread; budget, credential
+        and transient errors still stop or retry the stage as usual."""
+        try:
+            reading = self._generate(
+                "attachment-reader",
+                "planning",
+                ctx,
+                AttachmentReadingV1,
+                {"file_name": attachment.name},
+                deadline,
+                images=(image_data_url(attachment),),
+            )
+        except (ProviderRefusedError, InvalidProviderOutputError, ProviderOutputTruncatedError, ProviderRequestError):
+            return failed(attachment, "The image couldn't be read by the AI model.")
+        if not reading.readable or not reading.content.strip():
+            return failed(attachment, "No readable content was found in the image.")
+        text, truncated = tidy(reading.content)
+        return AttachmentRead(id=attachment.id, status="ready", text=text, truncated=truncated, note=None)
 
     def _frame(self, ctx: StageContext) -> DecisionFrameV2:
         """decision-frame.v2, or a v1 checkpoint from before M6 (read as having no conflicts)."""
@@ -474,6 +551,7 @@ class ModelReasoningProvider:
         deadline: float,
         check: Callable[[M], None] | None = None,
         client: ModelClient | None = None,
+        images: tuple[str, ...] = (),
     ) -> M:
         client = client or self.client
         prompt = self.prompts[prompt_id]
@@ -489,6 +567,7 @@ class ModelReasoningProvider:
                 json_schema=self._schemas[schema_name],
                 max_output_tokens=self.settings.max_output_tokens,
                 timeout_seconds=max(1.0, deadline - time.monotonic()),
+                images=images,
             )
             self._preflight(ctx, request, client)
             try:

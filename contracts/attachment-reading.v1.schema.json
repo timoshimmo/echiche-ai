@@ -1,0 +1,23 @@
+{
+  "$id": "attachment-reading.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "What the model could read from an image the user attached: its text and a factual description.",
+  "properties": {
+    "content": {
+      "maxLength": 8000,
+      "title": "Content",
+      "type": "string"
+    },
+    "readable": {
+      "title": "Readable",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "readable",
+    "content"
+  ],
+  "title": "AttachmentReadingV1",
+  "type": "object"
+}
