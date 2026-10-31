@@ -35,6 +35,13 @@ export default function OverviewPage() {
     } catch (e) { setError(errorMessage(e, "Could not load your overview.")); }
   }, []);
   useEffect(() => { void load(); }, [load]);
+  const [passwordUpdated, setPasswordUpdated] = useState(false);
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("password") === "updated") {
+      setPasswordUpdated(true);
+      window.history.replaceState(null, "", "/");
+    }
+  }, []);
 
   const attention = recent.flatMap(r => r.runs.filter(needsAttention).map(run => ({ run, title: r.project.title })));
   const running = recent.flatMap(r => r.runs.filter(run => !isSettled(run.status)).map(run => ({ run, title: r.project.title })));
@@ -53,6 +60,7 @@ export default function OverviewPage() {
         {!first && <Link href="/projects/new" className="btn btn-primary">New project <span className="btn-arrow" aria-hidden="true">+</span></Link>}
       </div>
 
+      {passwordUpdated && <Notice onDismiss={() => setPasswordUpdated(false)}>Your new password is saved.</Notice>}
       {error && <Notice tone="error">{error} <button type="button" className="link-button" onClick={() => void load()}>Try again</button></Notice>}
 
       {projects === null && !error && <div className="card" aria-busy="true"><span className="visually-hidden">Loading your overview</span><Skeleton lines={4} /></div>}

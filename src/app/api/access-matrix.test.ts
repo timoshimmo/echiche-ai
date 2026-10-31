@@ -34,8 +34,12 @@ const METHODS = ["GET", "POST", "PATCH", "PUT", "DELETE"] as const;
 const PUBLIC: Record<string, string> = {
   "GET api/health": "liveness",
   "GET api/ready": "readiness",
-  "POST auth/sign-in": "requests a magic link",
-  "GET auth/callback": "lands a magic link",
+  "POST auth/sign-in": "password sign-in (ADR-013)",
+  "POST auth/sign-up": "creates an account (open sign-up, ADR-013)",
+  "POST auth/google": "starts Google sign-in",
+  "POST auth/forgot-password": "emails a reset link; same answer for every address",
+  "POST auth/update-password": "form route: without a verified session it redirects to sign-in and changes nothing (auth-routes.test.ts)",
+  "GET auth/callback": "lands Google, confirmation and reset links",
   "POST auth/sign-out": "clears the caller's own session"
 };
 /** A valid body per mutating handler, so authorization (not validation) decides the answer. */

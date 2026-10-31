@@ -27,3 +27,9 @@ export const idempotencyKeySchema = z.string().regex(/^[A-Za-z0-9._:-]{8,128}$/)
 
 /** Magic-link sign-in form. */
 export const signInSchema = z.object({ email: z.email().max(254) });
+
+/** Password sign-in and sign-up (ADR-013). 12 characters minimum (Supabase minimum_password_length);
+ * 72 bytes maximum, the most bcrypt uses (longer passwords would be silently truncated). */
+export const passwordSchema = z.string().min(12).refine(p => new TextEncoder().encode(p).length <= 72, "too long");
+export const passwordSignInSchema = z.object({ email: z.email().max(254), password: z.string().min(1).max(200) });
+export const passwordSignUpSchema = z.object({ email: z.email().max(254), password: passwordSchema });

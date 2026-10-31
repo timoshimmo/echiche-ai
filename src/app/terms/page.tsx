@@ -19,7 +19,7 @@ export default function TermsPage() {
 
       <h2>The pilot</h2>
       <p>
-        Echiche is an early, invitation-only pilot run by {LEGAL.operator} [registered legal name to be confirmed]. Features may
+        Echiche is an early pilot run by {LEGAL.operator} [registered legal name to be confirmed]. Features may
         change, pause or be removed, and the service may be unavailable at times. [The pilot is free of charge.]
       </p>
 
