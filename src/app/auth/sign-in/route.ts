@@ -1,35 +1,20 @@
-import { randomBytes } from "node:crypto";
-import { NextResponse } from "next/server";
-import { signInSchema } from "@/lib/domain/validation";
-import { createSupabaseForRequest, SIGN_IN_COOKIE, signInCookieOptions } from "@/lib/server/auth";
+import { passwordSignInSchema } from "@/lib/domain/validation";
+import { createSupabaseForRequest } from "@/lib/server/auth";
+import { clientIp, emailFailures, ipFailures, readForm, toLogin } from "@/lib/server/auth-forms";
 import { getServerConfig } from "@/lib/server/config";
-import { checkOrigin, handleUnexpected, readTextCapped } from "@/lib/server/http";
+import { checkOrigin, handleUnexpected } from "@/lib/server/http";
 import { log } from "@/lib/server/log";
+import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const ROUTE = "POST /auth/sign-in";
 
-const toLogin = (origin: string, query: string) => NextResponse.redirect(`${origin}/login?${query}`, 303);
-
 /**
- * "Check your email", plus a short-lived marker cookie that ties the magic link to THIS browser.
- * The callback refuses links without it, so nobody can sign a victim into the attacker's account
- * by sending them a link (login CSRF; M8 finding F2).
- */
-function linkSent(origin: string) {
-  const response = toLogin(origin, "sent=1");
-  response.cookies.set(SIGN_IN_COOKIE, randomBytes(32).toString("base64url"), signInCookieOptions(getServerConfig()));
-  return response;
-}
-
-/**
- * Magic-link sign-in from the /login form (application/x-www-form-urlencoded).
- * Always answers "check your email" for a well-formed address, whether or not an
- * account exists, so the endpoint cannot be used to enumerate users.
- * Per-address and per-IP sending limits are enforced by Supabase Auth (config.toml
- * [auth.rate_limit] locally; dashboard settings in hosted projects).
+ * Email and password sign-in from the /login form (ADR-013). Wrong email and wrong password get the same
+ * answer, so the form cannot be used to find out who has an account. Repeated failures are limited per
+ * email and per client IP before Supabase is even asked.
  */
 export async function POST(request: Request) {
   const rejected = checkOrigin(request, ROUTE);
@@ -41,25 +26,32 @@ export async function POST(request: Request) {
     return handleUnexpected(error, ROUTE);
   }
 
-  const text = await readTextCapped(request, 2048);
-  const email = text === null ? undefined : new URLSearchParams(text).get("email")?.trim();
-  const parsed = signInSchema.safeParse({ email });
-  if (!parsed.success) return toLogin(origin, "error=invalid_email");
+  const fields = await readForm(request);
+  const parsed = passwordSignInSchema.safeParse({ email: fields?.get("email")?.trim().toLowerCase(), password: fields?.get("password") ?? "" });
+  if (!parsed.success) return toLogin(origin, "error=invalid_credentials");
+  const { email, password } = parsed.data;
+  const ip = clientIp(request);
+  if (emailFailures.blocked(email) || ipFailures.blocked(ip)) {
+    log("warn", "sign_in_throttled", { route: ROUTE });
+    return toLogin(origin, "error=rate_limited");
+  }
 
   try {
     const supabase = await createSupabaseForRequest();
-    const { error } = await supabase.auth.signInWithOtp({
-      email: parsed.data.email,
-      options: { emailRedirectTo: `${origin}/auth/callback` }
-    });
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) {
       if (error.status === 429) return toLogin(origin, "error=rate_limited");
-      // Includes "signups not allowed" for unknown addresses when sign-up is disabled: do not reveal it.
-      log("warn", "sign_in_otp_rejected", { route: ROUTE, errorName: error.name, status: error.status ?? null });
-      if (error.status && error.status < 500) return linkSent(origin);
+      if (error.code === "email_not_confirmed") return toLogin(origin, "error=email_not_confirmed");
+      if (error.status && error.status < 500) {
+        emailFailures.fail(email);
+        ipFailures.fail(ip);
+        return toLogin(origin, "error=invalid_credentials");
+      }
+      log("warn", "sign_in_rejected", { route: ROUTE, errorName: error.name, status: error.status ?? null });
       return toLogin(origin, "error=unavailable");
     }
-    return linkSent(origin);
+    emailFailures.clear(email);
+    return NextResponse.redirect(`${origin}/`, 303);
   } catch (error) {
     log("error", "sign_in_failed", { route: ROUTE, errorName: error instanceof Error ? error.name : "unknown" });
     return toLogin(origin, "error=unavailable");

@@ -224,15 +224,18 @@ enable_signup = true
 # addresses. If disabled, only the new email is required to confirm.
 double_confirm_changes = true
 # If enabled, users need to confirm their email address before signing in.
-enable_confirmations = false
+# ADR-013: on, because sign-up is open. Without it anyone could register someone else's address with a
+# password, and that account would later be merged with the real owner's Google sign-in.
+enable_confirmations = true
 # If enabled, users will need to reauthenticate or have logged in recently to change their password.
 secure_password_change = false
 # Controls the minimum amount of time that must pass before sending another signup confirmation or password reset email.
 max_frequency = "60s"
 # Number of characters used in the email OTP.
 otp_length = 6
-# Number of seconds before the email OTP expires (defaults to 1 hour).
-otp_expiry = 900
+# Number of seconds before the email OTP expires (defaults to 1 hour). Matches the 1-hour sign-in marker
+# cookie (ADR-013), so a reset or confirmation link works for an hour in the browser that asked for it.
+otp_expiry = 3600
 
 # Use a production-ready SMTP server
 # [auth.email.smtp]
@@ -333,6 +336,19 @@ url = ""
 # If enabled, the nonce check will be skipped. Required for local sign in with Google auth.
 skip_nonce_check = false
 # If enabled, it will allow the user to successfully authenticate when the provider does not return an email address.
+email_optional = false
+
+# ADR-013: "Continue with Google". Local development leaves it off unless you create a Google OAuth
+# client for http://127.0.0.1:54321/auth/v1/callback and export the two variables below.
+[auth.external.google]
+enabled = false
+client_id = ""  # your Google OAuth client ID, when enabling locally
+# DO NOT commit the secret: environment variable substitution only.
+secret = "env(SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET)"
+redirect_uri = ""
+url = ""
+# Local sign in with Google needs the nonce check skipped (server-side flow, no browser nonce).
+skip_nonce_check = true
 email_optional = false
 
 # Allow Solana wallet holders to sign in to your project via the Sign in with Solana (SIWS, EIP-4361) standard.

@@ -64,6 +64,7 @@ function AccountMenu({ email }: { email: string | null }) {
         <div className="account-menu" id="account-menu">
           <p className="account-label">Signed in as</p>
           <p className="account-email">{email ?? "your account"}</p>
+          <a href="/reset-password" className="btn btn-ghost btn-sm btn-block account-link">Change password</a>
           <form method="post" action="/auth/sign-out">
             <button type="submit" className="btn btn-secondary btn-sm btn-block">Sign out</button>
           </form>

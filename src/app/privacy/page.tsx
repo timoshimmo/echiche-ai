@@ -29,7 +29,9 @@ export default function PrivacyPage() {
 
       <h2>What we collect and why</h2>
       <ul>
-        <li><b>Account:</b> your email address and sign-in records, so you can sign in with a one-time link.</li>
+        <li><b>Account:</b> your email address, a securely hashed password (we never see or store the password itself) and
+          sign-in records. If you continue with Google, Google tells us your email address and basic profile (name and picture);
+          we use only the email address to identify your account.</li>
         <li><b>Your projects and decisions:</b> project titles and descriptions, the questions you ask, the briefs Echiche produces,
           memories you approve or add, decision versions and outcomes. This is the service itself: we process it to give you decision
           support and to keep your project&rsquo;s history.</li>
@@ -56,6 +58,7 @@ export default function PrivacyPage() {
 
       <h2>Who receives your data</h2>
       <ul>
+        <li><b>Google</b>, only if you choose &ldquo;Continue with Google&rdquo;: Google learns that you signed in to Echiche.</li>
         <li><b>Supabase</b> (database and sign-in) and <b>Render</b> (application hosting), both in Frankfurt, Germany.</li>
         <li><b>OpenAI</b>, to generate briefs: your project title and description, your question and the run&rsquo;s intermediate
           results are sent to its API, together with the text of anything you attach and any images you attach. OpenAI does not use API data for training by default and keeps abuse-monitoring logs for up
