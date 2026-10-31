@@ -20,7 +20,7 @@ describe("browser security headers (M8 F3)", () => {
     expect(csp).toMatch(/script-src 'self' 'unsafe-inline'(;|$)/); // no 'unsafe-eval', no other hosts
     expect(csp).toMatch(/object-src 'none'/);
     expect(csp).toMatch(/base-uri 'none'/);
-    expect(csp).toMatch(/form-action 'self'/);
+    expect(csp).toMatch(/form-action 'self' \S+ https:\/\/accounts\.google\.com(;|$)/);
     expect(csp).toMatch(/connect-src 'self'/);
     expect(csp).toMatch(/upgrade-insecure-requests/);
   });
@@ -31,6 +31,18 @@ describe("browser security headers (M8 F3)", () => {
     expect(csp).toMatch(/style-src 'self' 'unsafe-inline'(;|$)/);
     expect(csp).toMatch(/img-src 'self' data:(;|$)/);
     expect(csp).not.toMatch(/googleapis|gstatic/);
+  });
+
+  it("let the Google sign-in form follow its redirects to Supabase Auth and Google, and nowhere else (ADR-013)", () => {
+    const formAction = (url?: string) => securityHeaders("production", url).find(h => h.key === "Content-Security-Policy")!.value
+      .split("; ").find(d => d.startsWith("form-action"));
+    expect(formAction("https://abcdefghijklmnop.supabase.co")).toBe("form-action 'self' https://abcdefghijklmnop.supabase.co https://accounts.google.com");
+    expect(formAction("https://auth.example.com/")).toBe("form-action 'self' https://auth.example.com https://accounts.google.com");
+    expect(formAction("http://127.0.0.1:54321")).toBe("form-action 'self' http://127.0.0.1:54321 https://accounts.google.com");
+    // Unset or malformed: any Supabase project, never a bare wildcard or plain http elsewhere.
+    expect(formAction(undefined)).toBe("form-action 'self' https://*.supabase.co https://accounts.google.com");
+    expect(formAction("not a url")).toBe("form-action 'self' https://*.supabase.co https://accounts.google.com");
+    expect(formAction("http://evil.example")).toBe("form-action 'self' https://*.supabase.co https://accounts.google.com");
   });
 
   it("send HSTS only in production and allow eval only in development (fast refresh)", () => {

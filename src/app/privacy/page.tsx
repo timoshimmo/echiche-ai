@@ -23,8 +23,7 @@ export default function PrivacyPage() {
       <h2>Who we are</h2>
       <p>
         Echiche is operated by {LEGAL.operator} [registered legal name and address to be confirmed], the data controller for the
-        personal data described here. Contact us about privacy at <a href={`mailto:${SUPPORT.email}`}>{SUPPORT.email}</a> or{" "}
-        <a href={SUPPORT.phoneHref}>{SUPPORT.phone}</a>.
+        personal data described here. Contact us about privacy at <a href={`mailto:${SUPPORT.email}`}>{SUPPORT.email}</a>.
       </p>
 
       <h2>What we collect and why</h2>

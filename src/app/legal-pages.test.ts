@@ -17,12 +17,20 @@ describe("privacy notice, terms and support contact", () => {
   it("name the processors, the rights and the support contact", () => {
     const privacy = renderToStaticMarkup(createElement(PrivacyPage));
     for (const text of ["OpenAI", "Brave Search", "Supabase", "Render", "Frankfurt", "Nigeria Data Protection Commission",
-      "Export project data", "info@echiche-ai.com", "+234 805 752 7307", "tel:+2348057527307"]) {
+      "Export project data", "info@echiche-ai.com"]) {
       expect(privacy).toContain(text);
     }
     const terms = renderToStaticMarkup(createElement(TermsPage));
     expect(terms).toMatch(/not\s+legal, financial/);
     expect(terms).toContain("info@echiche-ai.com");
+  });
+
+  it("show no phone number anywhere: support is by email only", () => {
+    for (const page of [PrivacyPage, TermsPage, SiteFooter]) {
+      const html = renderToStaticMarkup(createElement(page));
+      expect(html).not.toContain("tel:");
+      expect(html).not.toMatch(/805\s?752|2348057527307/);
+    }
   });
 
   it("show a draft banner until legal review signs them off", () => {
@@ -32,7 +40,7 @@ describe("privacy notice, terms and support contact", () => {
   it("the footer carries the advice disclaimer and every link", () => {
     const footer = renderToStaticMarkup(createElement(SiteFooter));
     expect(footer).toContain("not professional advice");
-    for (const href of ['href="/privacy"', 'href="/terms"', 'href="mailto:info@echiche-ai.com"', 'href="tel:+2348057527307"']) {
+    for (const href of ['href="/privacy"', 'href="/terms"', 'href="mailto:info@echiche-ai.com"']) {
       expect(footer).toContain(href);
     }
   });

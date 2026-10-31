@@ -31,3 +31,7 @@ Magic-link sign-in is removed. The callback refuses `magiclink`, `invite` and `e
    3. Paste the client ID and secret into **Authentication → Sign In / Providers → Google** and enable it.
 3. **Authentication → URL Configuration:** Site URL = `APP_ORIGIN`; Redirect URLs include `APP_ORIGIN/auth/callback` (query strings such as `?flow=recovery` are allowed by the wildcard match).
 4. **Custom SMTP** (Resend, or similar) so confirmation and reset emails come from Echiche and aren't limited to a few an hour.
+
+## Addendum (31 October 2026): Content Security Policy
+
+The CSP `form-action` directive applies to every redirect after a form post, so `form-action 'self'` silently cancelled "Continue with Google" at its 303 to Supabase. `form-action` now allows exactly two more origins: the Supabase Auth origin (taken from `SUPABASE_URL`, or `https://*.supabase.co` when it is not set at build time) and `https://accounts.google.com`. Covered by `src/lib/server/security-headers.test.ts`.

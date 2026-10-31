@@ -13,7 +13,6 @@ export function SiteFooter() {
         <Link href="/privacy">Privacy notice</Link>
         <Link href="/terms">Terms</Link>
         <a href={`mailto:${SUPPORT.email}`}>{SUPPORT.email}</a>
-        <a href={SUPPORT.phoneHref}>{SUPPORT.phone}</a>
       </nav>
     </footer>
   );

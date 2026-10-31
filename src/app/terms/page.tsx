@@ -59,7 +59,7 @@ export default function TermsPage() {
 
       <h2>Contact</h2>
       <p>
-        <a href={`mailto:${SUPPORT.email}`}>{SUPPORT.email}</a> · <a href={SUPPORT.phoneHref}>{SUPPORT.phone}</a>
+        <a href={`mailto:${SUPPORT.email}`}>{SUPPORT.email}</a>
       </p>
 
       <p><Link href="/">Back to Echiche</Link> · <Link href="/privacy">Privacy notice</Link></p>
