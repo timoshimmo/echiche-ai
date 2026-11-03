@@ -5,17 +5,17 @@ import { PublicHeader } from "../ui/public-header";
 
 export const metadata = { title: "Terms" };
 
-/** Pilot terms of use (M9 P0-1). Items in [brackets] must be confirmed before LEGAL.status becomes "final". */
+/** Pilot terms of use (M9 P0-1). Items in [brackets] must be confirmed before LEGAL.termsStatus becomes "final". */
 export default function TermsPage() {
   return (
     <div className="public-page">
     <PublicHeader />
     <main className="legal" id="main">
-      {LEGAL.status === "draft" && (
+      {LEGAL.termsStatus === "draft" && (
         <div className="notice notice-warning" role="note">Draft for legal review. Items in [brackets] are still to be confirmed.</div>
       )}
       <h1>Terms of use (pilot)</h1>
-      <p className="legal-meta">Last updated {LEGAL.lastUpdated}</p>
+      <p className="legal-meta">Last updated {LEGAL.termsUpdated}</p>
 
       <h2>The pilot</h2>
       <p>

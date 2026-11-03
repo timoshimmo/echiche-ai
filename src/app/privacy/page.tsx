@@ -7,23 +7,22 @@ export const metadata = { title: "Privacy notice" };
 
 /**
  * Privacy notice (M9 P0-1). Every factual statement here mirrors docs/security/data-lifecycle.md;
- * change both together. Items in [brackets] must be confirmed before LEGAL.status becomes "final".
+ * change both together. Confirmed by the product owner on 3 November 2026 (operator, retention, reply time).
  */
 export default function PrivacyPage() {
   return (
     <div className="public-page">
     <PublicHeader />
     <main className="legal" id="main">
-      {LEGAL.status === "draft" && (
+      {LEGAL.privacyStatus === "draft" && (
         <div className="notice notice-warning" role="note">Draft for legal review. Items in [brackets] are still to be confirmed.</div>
       )}
       <h1>Privacy notice</h1>
-      <p className="legal-meta">Last updated {LEGAL.lastUpdated}</p>
+      <p className="legal-meta">Last updated {LEGAL.privacyUpdated}</p>
 
       <h2>Who we are</h2>
       <p>
-        Echiche is operated by {LEGAL.operator} [registered legal name and address to be confirmed], the data controller for the
-        personal data described here. Contact us about privacy at <a href={`mailto:${SUPPORT.email}`}>{SUPPORT.email}</a>.
+        Echiche is operated by {LEGAL.operator}, the data controller for the personal data described here. Contact us about privacy at <a href={`mailto:${SUPPORT.email}`}>{SUPPORT.email}</a>.
       </p>
 
       <h2>What we collect and why</h2>
@@ -44,7 +43,7 @@ export default function PrivacyPage() {
       </ul>
       <p>
         We process this to provide the service you asked for (performance of our agreement with you) and, for usage and security
-        records, for our legitimate interest in running a safe service [legal bases to be confirmed in legal review]. We do not sell
+        records, for our legitimate interest in running a safe service. Where we rely on your consent, you can withdraw it at any time. We do not sell
         your data, show advertising, or use your content to train AI models.
       </p>
 
@@ -90,8 +89,9 @@ export default function PrivacyPage() {
           request from Echiche, not from you.</li>
       </ul>
       <p>
-        Some of these providers process data outside Nigeria (in the European Union and the United States). We rely on [the
-        appropriate safeguards for international transfers under the Nigeria Data Protection Act 2023 to be confirmed in legal review].
+        Some of these providers process data outside Nigeria (in the European Union and the United States). These
+        transfers are covered by our providers&rsquo; data processing agreements, which include contractual safeguards such as
+        standard contractual clauses, as the Nigeria Data Protection Act 2023 requires.
       </p>
 
       <h2>How long we keep it</h2>
@@ -99,8 +99,8 @@ export default function PrivacyPage() {
         <li>Projects, runs (including what was read from your attachments), memories and decisions: until you delete them in the
           app, or until your account is closed.</li>
         <li>Deleting a memory removes all its versions; deleting a project removes everything in it. Deleted data can remain in
-          encrypted backups for up to [backup retention period, to be confirmed] before it is overwritten.</li>
-        <li>Usage records used for abuse limits: about 30 days. Logs: [log retention period, to be confirmed].</li>
+          encrypted backups for up to 30 days before it is overwritten.</li>
+        <li>Usage records used for abuse limits: about 30 days. Application logs, which never contain your content or email address: up to 30 days.</li>
       </ul>
 
       <h2>Your rights</h2>
@@ -108,9 +108,8 @@ export default function PrivacyPage() {
         You can access and export your data (&ldquo;Export project data&rdquo; downloads a machine-readable copy), correct it
         (memories and decisions can be corrected in the app), and delete it (memories and projects in the app; ask us to close your
         account and delete everything). You can also object to or ask us to restrict processing, and withdraw any consent you gave.
-        Contact <a href={`mailto:${SUPPORT.email}`}>{SUPPORT.email}</a>; we reply within [response period, to be confirmed].
-        If you are unhappy with our answer, you can complain to the Nigeria Data Protection Commission [or the regulator where you
-        live].
+        Contact <a href={`mailto:${SUPPORT.email}`}>{SUPPORT.email}</a>; we reply within 30 days.
+        If you are unhappy with our answer, you can complain to the Nigeria Data Protection Commission, or the data protection authority where you live.
       </p>
 
       <h2>Security</h2>
@@ -118,6 +117,12 @@ export default function PrivacyPage() {
         Data is encrypted in transit and at rest by our providers. Each account can reach only its own data, enforced in the
         application and in the database. If we learn of a breach that affects you, we will tell you and the regulator as the law
         requires.
+      </p>
+
+      <h2>Cookies</h2>
+      <p>
+        Echiche uses only the cookies it needs to sign you in and keep you signed in securely. We use no advertising, analytics or
+        tracking cookies, and no third-party trackers.
       </p>
 
       <h2>Changes</h2>

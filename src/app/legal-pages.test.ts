@@ -41,8 +41,12 @@ describe("privacy notice, terms and support contact", () => {
     }
   });
 
-  it("show a draft banner until legal review signs them off", () => {
-    expect(renderToStaticMarkup(createElement(PrivacyPage))).toContain("Draft for legal review");
+  it("show the privacy notice as final, with no draft banner or unfilled [brackets]; terms keep theirs until confirmed", () => {
+    const privacy = renderToStaticMarkup(createElement(PrivacyPage));
+    expect(privacy).not.toContain("Draft for legal review");
+    expect(privacy).not.toMatch(/\[[^\]]*\]/);
+    expect(privacy).toContain("within 30 days");
+    expect(renderToStaticMarkup(createElement(TermsPage))).toContain("Draft for legal review");
   });
 
   it("the footer carries the advice disclaimer and every link", () => {
