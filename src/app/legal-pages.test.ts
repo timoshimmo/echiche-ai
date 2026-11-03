@@ -25,6 +25,14 @@ describe("privacy notice, terms and support contact", () => {
     expect(terms).toContain("info@echiche-ai.com");
   });
 
+  it("explain Google sign-in data and the Limited Use statement (Google brand verification)", () => {
+    const privacy = renderToStaticMarkup(createElement(PrivacyPage));
+    for (const text of ["If you sign in with Google", "What we receive", "How we use it", "Where it is stored", "Sharing",
+      "Keeping and deleting it", "Limited Use", "https://developers.google.com/terms/api-services-user-data-policy"]) {
+      expect(privacy).toContain(text);
+    }
+  });
+
   it("show no phone number anywhere: support is by email only", () => {
     for (const page of [PrivacyPage, TermsPage, SiteFooter]) {
       const html = renderToStaticMarkup(createElement(page));

@@ -83,3 +83,7 @@ With `RESEARCH_PROVIDER=brave`, the worker sends search queries written by the m
 - **Who receives the content.** Extracted text and images go to the model provider (OpenAI) as fenced, untrusted data in the framing, critique and synthesis calls; images also in one reading call. A linked page is fetched by the worker with the research fetcher, so that website sees a request from Echiche's server (user agent `EchicheResearchBot`), not from the user. Brave receives nothing from attachments directly; search queries are written from the decision frame, which may reflect attachment content.
 - **Not logged.** Attachment text never appears in logs, run events or stage checkpoints. Logs record only the number of attachments.
 - **Limits.** 5 attachments per question (at most 3 links and 3 images); files up to 5 MB (images 4 MB); 15,000 characters of text kept per attachment and 30,000 per run; PDFs read up to 60 pages; Office files refused if they inflate beyond 40 MB.
+
+## Google sign-in data (ADR-013)
+
+With "Continue with Google", Supabase Auth receives the `openid`, `email` and `profile` claims: email address, email-verified flag, name, profile picture URL and Google account ID. They are stored only with the user's Supabase Auth record (Frankfurt), used only to create the account and sign in, never sent to OpenAI or Brave, never shared, sold, used for ads or for model training, and deleted when the account is closed. The privacy notice states this and the Google API Services User Data Policy (Limited Use) commitment; change both together.
